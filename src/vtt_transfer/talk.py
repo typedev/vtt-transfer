@@ -1,0 +1,148 @@
+"""VTT Talk parsing: which arguments of which commands are point numbers, and renumbering them.
+
+Only commands whose argument types are known for sure are supported. A glyph whose
+VTT Talk uses anything else is never remapped automatically (it goes to the re-hint list).
+"""
+
+from __future__ import annotations
+
+import re
+
+COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
+CALL_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9]*)\s*\(([^()]*)\)")
+INT_RE = re.compile(r"^\s*\d+\s*$")
+
+# every numeric argument is a point
+POINT_LIST = {
+    "YShift", "XShift",
+    "YInterpolate", "XInterpolate",
+    "YIPAnchor", "XIPAnchor",
+    "YAlign", "XAlign",
+    "YNoRound", "XNoRound",
+    "YDownToGrid", "XDownToGrid", "YUpToGrid", "XUpToGrid",
+    "YHalfGrid", "XHalfGrid",
+}
+# (point [, cvt])
+ANCHOR = {"YAnchor", "XAnchor", "ResYAnchor", "ResXAnchor"}
+# (point, point [, non-numeric min-distance flags])
+DIST = {"YDist", "XDist", "ResYDist", "ResXDist"}
+# (point, point [, cvt] [, non-numeric flags])
+LINK = {"YLink", "XLink", "ResYLink", "ResXLink"}
+# (point, deltas@ppems ...)
+DELTA = {"YDelta", "XDelta"}
+NO_ARGS = {"Smooth", "XSmooth", "YSmooth"}
+
+SUPPORTED = POINT_LIST | ANCHOR | DIST | LINK | DELTA | NO_ARGS
+
+
+def strip_comments(text: str) -> str:
+    return COMMENT_RE.sub(" ", text)
+
+
+def has_code(text: str) -> bool:
+    return bool(strip_comments(text or "").strip())
+
+
+def _point_positions(cmd: str, args: list[str]) -> list[int] | None:
+    """Indices of point arguments, or None if the command/argument shape is not understood."""
+    args = [a for a in args]
+    nonempty = [a for a in args if a.strip()]
+    numeric = [i for i, a in enumerate(args) if INT_RE.match(a)]
+    if cmd in NO_ARGS:
+        return [] if not nonempty else None
+    if cmd in POINT_LIST:
+        return numeric if len(numeric) == len(nonempty) and numeric else None
+    if cmd in ANCHOR:
+        if len(nonempty) in (1, 2) and all(INT_RE.match(a) for a in nonempty):
+            return [0]
+        return None
+    if cmd in DIST:
+        if len(args) >= 2 and 0 in numeric and 1 in numeric and len(numeric) == 2:
+            return [0, 1]
+        return None
+    if cmd in LINK:
+        if len(args) >= 2 and 0 in numeric and 1 in numeric and len(numeric) <= 3:
+            if len(numeric) == 3 and numeric[2] != 2:
+                return None
+            return [0, 1]
+        return None
+    if cmd in DELTA:
+        if args and INT_RE.match(args[0]) and all("@" in a for a in args[1:] if a.strip()):
+            return [0]
+        return None
+    return None
+
+
+def _code_segments(text: str):
+    """Yield (is_code, segment) pieces of text, comments kept verbatim."""
+    pos = 0
+    for m in COMMENT_RE.finditer(text):
+        if m.start() > pos:
+            yield True, text[pos:m.start()]
+        yield False, m.group(0)
+        pos = m.end()
+    if pos < len(text):
+        yield True, text[pos:]
+
+
+def analyze(text: str) -> tuple[set[int], list[str], list[str]]:
+    """Return (referenced points, unsupported commands, all commands)."""
+    refs: set[int] = set()
+    unsupported: list[str] = []
+    commands: list[str] = []
+    for is_code, seg in _code_segments(text or ""):
+        if not is_code:
+            continue
+        for m in CALL_RE.finditer(seg):
+            cmd, args = m.group(1), m.group(2).split(",")
+            commands.append(cmd)
+            pos = _point_positions(cmd, args)
+            if pos is None:
+                unsupported.append(f"{cmd}({m.group(2).strip()})")
+                continue
+            refs.update(int(args[i]) for i in pos)
+        # anything code-like that is not a recognised call (e.g. Inline, #directives)
+        rest = CALL_RE.sub(" ", seg).strip()
+        if rest:
+            unsupported.append(rest[:60])
+    return refs, unsupported, commands
+
+
+def remap(text: str, mapping: dict[int, int]) -> str:
+    """Renumber point arguments according to mapping. Caller must ensure all refs are mapped."""
+
+    def fix_call(m: re.Match) -> str:
+        cmd, raw = m.group(1), m.group(2)
+        args = raw.split(",")
+        pos = _point_positions(cmd, args)
+        if not pos:
+            return m.group(0)
+        for i in pos:
+            old = int(args[i])
+            args[i] = re.sub(r"\d+", str(mapping[old]), args[i], count=1)
+        return f"{m.group(0)[: m.start(2) - m.start(0)]}{','.join(args)})"
+
+    out = []
+    for is_code, seg in _code_segments(text):
+        out.append(CALL_RE.sub(fix_call, seg) if is_code else seg)
+    return "".join(out)
+
+
+X_CMD_RE = re.compile(r"^(Res)?X[A-Z]")
+
+
+def y_only(text: str) -> tuple[str, int]:
+    """Drop X-direction commands (X*, ResX*), keep Y commands, Smooth() and comments."""
+    removed = 0
+
+    def drop(m: re.Match) -> str:
+        nonlocal removed
+        if X_CMD_RE.match(m.group(1)):
+            removed += 1
+            return ""
+        return m.group(0)
+
+    out = []
+    for is_code, seg in _code_segments(text):
+        out.append(CALL_RE.sub(drop, seg) if is_code else seg)
+    return "".join(out), removed
