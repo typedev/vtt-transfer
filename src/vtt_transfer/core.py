@@ -13,6 +13,7 @@ from fontTools import agl
 from fontTools.ttLib import TTFont, newTable
 
 from . import talk as vtalk
+from .i18n import M, Msg
 
 VOLT_TABLES = ("TSIV", "TSID", "TSIJ", "TSIP", "TSIS", "TSIB")
 METRIC_CACHE_TABLES = ("hdmx", "LTSH", "VDMX")
@@ -77,13 +78,13 @@ class GlyphResult:
     gid: int | None = None
     hinted_in_source: bool = False
     geometry_changed: bool = False
-    notes: list = field(default_factory=list)
+    notes: list = field(default_factory=list)          # Msg
     lost_points: list = field(default_factory=list)   # dicts: index, xy, nearest, nearest_xy
     mapping: dict = field(default_factory=dict)
     old_talk: str = ""
     old_asm: str = ""
     group: int | None = None
-    group_reason: str = ""
+    group_reason: Msg | str = ""
     unhinted_components: list = field(default_factory=list)
     used_in: list = field(default_factory=list)
 
@@ -91,8 +92,8 @@ class GlyphResult:
 @dataclass
 class Check:
     level: str   # ok / info / warn / error
-    title: str
-    detail: str = ""
+    title: Msg
+    detail: Msg | str = ""
 
 
 @dataclass
@@ -104,7 +105,7 @@ class TransferResult:
     removed: list = field(default_factory=list)       # GlyphResult
     renames: dict = field(default_factory=dict)       # source -> target
     checks: list = field(default_factory=list)
-    actions: list = field(default_factory=list)       # technical log of what was copied
+    actions: list = field(default_factory=list)       # Msg: technical log of what was copied
     groups: dict = field(default_factory=dict)        # group id -> example source glyph names
     compile_log: list = field(default_factory=list)
     compiled: bool = False
@@ -308,11 +309,11 @@ def source_is_hinted(font, info: GlyphInfo, asm: str, talk_text: str) -> bool:
     return False
 
 
-ROLE_NAMES = {
-    "Lu": "прописные", "Ll": "строчные", "Nd": "цифры", "No": "прочие цифры", "sup": "индексы",
-    "paren": "скобки", "Mn": "комбинируемые знаки", "Sk": "модификаторы", "Lm": "буквы-модификаторы",
-    "Lo": "прочие буквы", "Po": "пунктуация", "Pd": "тире", "Sm": "мат. знаки", "Sc": "валюты", "So": "символы",
-}
+def role_name(role: str) -> Msg | str:
+    try:
+        return M(f"role_{role}")
+    except KeyError:
+        return role
 
 
 def point_mapping(s: GlyphInfo, t: GlyphInfo, refs: set[int]):
@@ -328,7 +329,7 @@ def point_mapping(s: GlyphInfo, t: GlyphInfo, refs: set[int]):
             if k < 4:
                 mapping[r] = n_n + k   # phantom points follow the outline
             else:
-                lost.append(dict(index=r, xy=None, reason="номер точки вне диапазона"))
+                lost.append(dict(index=r, xy=None, reason=M("lost_range")))
             continue
         p = s.coords[r]
         cands = [i for i in idx.get(p, []) if t.oncurve[i] == s.oncurve[r]]
@@ -337,14 +338,14 @@ def point_mapping(s: GlyphInfo, t: GlyphInfo, refs: set[int]):
             continue
         entry = dict(index=r, xy=p, on=bool(s.oncurve[r]))
         if len(cands) > 1:
-            entry["reason"] = f"несколько точек с координатами {p}"
+            entry["reason"] = M("lost_ambiguous", p=p)
         elif t.coords:
             j = min(range(n_n), key=lambda i: (t.coords[i][0] - p[0]) ** 2 + (t.coords[i][1] - p[1]) ** 2)
             entry.update(nearest=j, nearest_xy=t.coords[j],
-                         reason=f"точки {p} больше нет, ближайшая — {j} {t.coords[j]}")
+                         reason=M("lost_missing", p=p, j=j, q=t.coords[j]))
         lost.append(entry)
     if len(set(mapping.values())) != len(mapping):
-        lost.append(dict(index=-1, xy=None, reason="две точки сопоставились с одной"))
+        lost.append(dict(index=-1, xy=None, reason=M("lost_collision")))
     return mapping, lost
 
 
@@ -362,47 +363,44 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
     res.src_font = src
 
     # ------------------------------------------------------------ requirements
-    for f, label in ((src, "исходном"), (tgt, "целевом")):
+    for f, label in ((src, "source"), (tgt, "target")):
         if "glyf" not in f:
-            raise TransferError(f"В {label} шрифте нет таблицы glyf — нужен TrueType-шрифт.")
+            raise TransferError(f"The {label} font has no glyf table — a TrueType font is required.")
     if "TSI1" not in src or "TSI3" not in src:
-        raise TransferError("В исходном шрифте нет исходников VTT (таблиц TSI1/TSI3) — переносить нечего.")
+        raise TransferError("The source font has no VTT sources (TSI1/TSI3 tables) — nothing to transfer.")
     if src["head"].unitsPerEm != tgt["head"].unitsPerEm:
         raise TransferError(
-            f"UPM отличается: {src['head'].unitsPerEm} → {tgt['head'].unitsPerEm}. "
-            "Значения CVT и дельты не переносятся при смене UPM."
+            f"UPM differs: {src['head'].unitsPerEm} → {tgt['head'].unitsPerEm}. "
+            "CVT values and deltas cannot be transferred across a UPM change."
         )
-    res.checks.append(Check("ok", "UPM совпадает", str(tgt["head"].unitsPerEm)))
+    res.checks.append(Check("ok", M("chk_upm_same"), str(tgt["head"].unitsPerEm)))
 
     a_s, a_t = axes(src), axes(tgt)
     same_axes = a_s == a_t
-    fmt_axes = lambda a: ", ".join(f"{t} {mn:g}–{df:g}–{mx:g}" for t, mn, df, mx in a) or "нет"
+    fmt_axes = lambda a: ", ".join(f"{t} {mn:g}–{df:g}–{mx:g}" for t, mn, df, mx in a) or M("axes_none")
     if same_axes:
-        res.checks.append(Check("ok", "Оси совпадают", fmt_axes(a_t)))
+        res.checks.append(Check("ok", M("chk_axes_same"), fmt_axes(a_t)))
     else:
-        res.checks.append(Check("warn", "Оси отличаются",
-                                f"было: {fmt_axes(a_s)}; стало: {fmt_axes(a_t)}. Хинты глифов переносятся, "
-                                "но вариации CVT (cvar/TSIC) — нет."))
+        res.checks.append(Check("warn", M("chk_axes_differ"),
+                                M("chk_axes_differ_detail", old=fmt_axes(a_s), new=fmt_axes(a_t))))
     same_avar = avar_maps(src) == avar_maps(tgt)
     if not same_avar:
-        res.checks.append(Check("warn", "avar отличается",
-                                "Нормализованные координаты сместились: инстансы, на которых проверяли хинты, "
-                                "теперь в других точках пространства."))
+        res.checks.append(Check("warn", M("chk_avar_differ"), M("chk_avar_differ_detail")))
     r_s, r_t = regions(src), regions(tgt)
     if r_s == r_t:
-        res.checks.append(Check("ok", "Регионы gvar (мастера) совпадают", f"{len(r_t)} регионов"))
+        res.checks.append(Check("ok", M("chk_regions_same"), M("chk_regions_count", n=len(r_t))))
     else:
-        res.checks.append(Check("warn", "Набор мастеров изменился",
-                                f"было {len(r_s)} регионов gvar, стало {len(r_t)}; новых: {len(r_t - r_s)}, "
-                                f"исчезло: {len(r_s - r_t)}. Для новых регионов нет вариаций CVT — проверьте их в VTT."))
+        res.checks.append(Check("warn", M("chk_regions_differ"),
+                                M("chk_regions_differ_detail", old=len(r_s), new=len(r_t),
+                                  added=len(r_t - r_s), gone=len(r_s - r_t))))
 
     had_hints = [t for t in ("TSI1", "TSI3", "fpgm", "prep", "cvt ") if t in tgt]
     if had_hints:
-        res.checks.append(Check("warn", "В целевом шрифте уже были хинты/исходники VTT",
-                                f"таблицы {', '.join(had_hints)} заменены данными из исходного шрифта"))
+        res.checks.append(Check("warn", M("chk_target_hinted"),
+                                M("chk_target_hinted_detail", tables=", ".join(had_hints))))
 
     # ------------------------------------------------------------ glyph analysis
-    log("анализ глифов…")
+    log("analysing glyphs…")
     si, ti = glyph_infos(src), glyph_infos(tgt)
     s_order, t_order = src.getGlyphOrder(), tgt.getGlyphOrder()
     s_set, t_set = set(s_order), set(t_order)
@@ -489,11 +487,11 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
                 if want:
                     prefixes.insert(0, "USEMYMETRICS")
                 if blocks:
-                    notes.append(f"USE_MY_METRICS у компонента {c.glyphName} взят из нового шрифта")
+                    notes.append(M("note_umm", c=c.glyphName))
             if hasattr(c, "firstPt"):
-                notes.append(f"компонент {c.glyphName} привязан по точкам (ANCHOR) — проверьте вручную")
+                notes.append(M("note_anchor", c=c.glyphName))
             elif hasattr(c, "transform"):
-                notes.append(f"компонент {c.glyphName} с трансформацией (SOFFSET) — проверьте")
+                notes.append(M("note_soffset", c=c.glyphName))
             lines += render_component(prefixes, flag, t_gid[c.glyphName], c)
         if body:
             lines += body
@@ -511,7 +509,7 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
             g.program = ttProgram.Program()
             g.program.fromBytecode(b"")
 
-    log("перенос…")
+    log("transferring…")
     for tname in t_order:
         info, gid = ti[tname], t_gid[tname]
         sname = t2s.get(tname)
@@ -519,17 +517,17 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
         if twin is not None:
             r = GlyphResult(tname, NEW_TWIN, info.kind, twin, gid, True)
             if twin_dx:
-                r.notes.append(f"контур совпадает с {twin}, но сдвинут по X на {twin_dx}: скопированы только Y-хинты")
+                r.notes.append(M("note_twin_shifted", twin=twin, dx=twin_dx))
             else:
-                r.notes.append(f"хинты скопированы с {twin}: контур совпадает точка в точку")
+                r.notes.append(M("note_twin_exact", twin=twin))
             if src["hmtx"][twin][0] != tgt["hmtx"][tname][0]:
-                r.notes.append(f"ширина отличается: {src['hmtx'][twin][0]} → {tgt['hmtx'][tname][0]}")
+                r.notes.append(M("note_width", old=src["hmtx"][twin][0], new=tgt["hmtx"][tname][0]))
             r.old_talk = s_talk.get(twin, "")
             talk_twin = re.sub(r"(GlyphID |VTTTalk glyph )\d+", lambda m: f"{m.group(1)}{gid}", s_talk[twin], count=1)
             if twin_dx:
                 talk_twin, n_x = vtalk.y_only(talk_twin)
                 if n_x:
-                    r.notes.append(f"удалено X-команд: {n_x}")
+                    r.notes.append(M("note_x_removed", n=n_x))
             n_talk[tname] = talk_twin
             if s_asm.get(twin) and not twin_dx:
                 n_asm[tname] = re.sub(r"TT glyph \d+", f"TT glyph {gid}", s_asm[twin], count=1)
@@ -554,7 +552,7 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
         r = GlyphResult(tname, "", info.kind, sname, gid, hinted_src[sname])
         r.old_talk = s_talk.get(sname, "")
         if sname != tname:
-            r.notes.append(f"переименован: {sname} → {tname}")
+            r.notes.append(M("note_renamed", old=sname, new=tname))
         if sname in s_groups:
             n_groups[tname] = s_groups[sname]
         talk_src, asm_src = s_talk.get(sname, ""), s_asm.get(sname, "")
@@ -564,8 +562,7 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
 
         if s.kind != info.kind:
             r.status = TYPE_CHANGED
-            kinds = {"simple": "простой", "composite": "композит", "empty": "пустой"}
-            r.notes.append(f"тип изменился: {kinds[s.kind]} → {kinds[info.kind]}")
+            r.notes.append(M("note_type", old=M(f"kind_{s.kind}"), new=M(f"kind_{info.kind}")))
             if info.kind == "composite":
                 n_asm[tname], notes = composite_asm(tname)
                 r.notes += notes
@@ -591,14 +588,14 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
                 reasons = []
                 mapping, lost = point_mapping(s, info, refs)
                 if not vtalk.has_code(talk_src):
-                    reasons.append("хинты были только в ассемблере (нет VTT Talk) — автоматический ремап невозможен")
+                    reasons.append(M("note_asm_only"))
                 elif unsupported:
-                    reasons.append("команды, которые не ремапятся автоматически: " + ", ".join(unsupported[:5]))
+                    reasons.append(M("note_unsupported", cmds=", ".join(unsupported[:5])))
                 if not remap:
-                    reasons.append("ремап отключён (--no-remap)")
+                    reasons.append(M("note_no_remap"))
                 if lost:
-                    reasons.append(f"опорные точки не найдены в новом контуре: {len(lost)} из {len(refs)}")
-                r.notes.append(f"точек: {s.npoints} → {info.npoints}, контуров: {len(s.ends)} → {len(info.ends)}")
+                    reasons.append(M("note_lost", lost=len(lost), total=len(refs)))
+                r.notes.append(M("note_points", a=s.npoints, b=info.npoints, c=len(s.ends), d=len(info.ends)))
                 if reasons:
                     r.status = REHINT
                     r.lost_points = lost
@@ -619,13 +616,13 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
                 blocks = None
             renamed_c = [f"{a} → {b}" for a, b in zip(s.components, info.components) if a != b]
             if renamed_c:
-                r.notes.append("компоненты: " + ", ".join(renamed_c))
+                r.notes.append(M("note_components", pairs=", ".join(renamed_c)))
             s_off = [(getattr(c, "x", None), getattr(c, "y", None)) for c in sg.components]
             t_off = [(getattr(c, "x", None), getattr(c, "y", None)) for c in tg.components]
             if len(s.components) == len(info.components) and s_off != t_off:
-                r.notes.append("смещения компонентов изменились (взяты из нового шрифта)")
+                r.notes.append(M("note_offsets"))
             if len(s.components) != len(info.components):
-                r.notes.append(f"число компонентов: {len(s.components)} → {len(info.components)}")
+                r.notes.append(M("note_ncomponents", a=len(s.components), b=len(info.components)))
             keep = same_struct and lines_have_code(body)
             n_asm[tname], notes = composite_asm(tname, blocks, header, body if keep else None, csep)
             r.notes += notes
@@ -636,8 +633,8 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
                 r.status = COMPOSITE_DROPPED
                 r.old_asm = "\n".join(body)
                 changed = [b for a, b in zip(s.components, info.components) if si[a].structure != ti[b].structure]
-                r.notes.append("собственные инструкции композита сняты: изменилась структура точек компонентов"
-                               + (f" ({', '.join(changed)})" if changed else ""))
+                r.notes.append(M("note_comp_dropped_in", names=", ".join(changed)) if changed
+                               else M("note_comp_dropped"))
             else:
                 r.status = TRANSFERRED if r.hinted_in_source else UNHINTED_SAME
         res.glyphs[tname] = r
@@ -674,25 +671,25 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
         info = ti[tname]
         if info.kind == "composite":
             grp = comp_groups.most_common(1)[0][0] if comp_groups else 0
-            reason = "как у большинства композитов в исходнике"
+            reason = M("grp_composites")
         elif info.kind == "empty":
-            grp, reason = 0, "пустой глиф"
+            grp, reason = 0, M("grp_empty")
         else:
             base = tname.split(".")[0]
             ro = role_of(info)
             if base != tname and base in n_groups:
-                grp, reason = n_groups[base], f"как у базового глифа {base}"
+                grp, reason = n_groups[base], M("grp_base", base=base)
             elif ro == "Mn" and mn_known:
                 grp = mn_known.most_common(1)[0][0]
-                reason = "как у других комбинируемых знаков в новой версии"
+                reason = M("grp_marks")
             elif ro and role_groups.get(ro):
                 grp, n = role_groups[ro].most_common(1)[0]
-                reason = f"как у глифов категории «{ROLE_NAMES.get(ro, ro)}» в исходнике"
+                reason = M("grp_role", role=role_name(ro))
             elif ro == "Mn" and role_groups.get("Sk"):
                 grp, n = role_groups["Sk"].most_common(1)[0]
-                reason = "комбинируемый знак — как у спейсинговых акцентов в исходнике"
+                reason = M("grp_spacing")
             else:
-                grp, reason = 0, "категория не определена"
+                grp, reason = 0, M("grp_unknown")
         n_groups[tname] = grp
         r.group, r.group_reason = grp, reason
 
@@ -740,7 +737,7 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
     for tag in ("cvt ", "fpgm", "prep"):
         if tag in src:
             tgt[tag] = copy.deepcopy(src[tag])
-            res.actions.append(f"{tag.strip()}: скопирован из исходного шрифта")
+            res.actions.append(M("act_copied", tag=tag.strip()))
         elif tag in tgt:
             del tgt[tag]
     if "gasp" in src:
@@ -748,41 +745,38 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
         new = dict(src["gasp"].gaspRange)
         tgt["gasp"] = copy.deepcopy(src["gasp"])
         if old is not None and old != new:
-            res.checks.append(Check("info", "gasp заменён на исходный", f"был {old}, стал {new}"))
-        res.actions.append("gasp: скопирован из исходного шрифта")
+            res.checks.append(Check("info", M("chk_gasp_replaced"), M("chk_gasp_replaced_detail", old=old, new=new)))
+        res.actions.append(M("act_copied", tag="gasp"))
     if "cvar" in src or "TSIC" in src:
         if same_axes and same_avar:
             for tag in ("cvar", "TSIC"):
                 if tag in src:
                     tgt[tag] = copy.deepcopy(src[tag])
-                    res.actions.append(f"{tag}: скопирован")
-            res.checks.append(Check("ok", "Вариации CVT (cvar/TSIC) перенесены"))
+                    res.actions.append(M("act_copied_short", tag=tag))
+            res.checks.append(Check("ok", M("chk_cvar_ok")))
         else:
-            res.checks.append(Check("warn", "Вариации CVT не перенесены",
-                                    "оси или avar изменились — задайте CVT по мастерам заново в VTT"))
+            res.checks.append(Check("warn", M("chk_cvar_skipped"), M("chk_cvar_skipped_detail")))
     else:
-        res.checks.append(Check("info", "В исходнике нет cvar/TSIC",
-                                "CVT одинаковые для всех инстансов. Если в крайних мастерах штрихи или высоты "
-                                "заметно отличаются от default, стоит задать вариации CVT в VTT."))
+        res.checks.append(Check("info", M("chk_cvar_none"), M("chk_cvar_none_detail")))
     volt = [t for t in VOLT_TABLES if t in src]
     if volt:
-        res.checks.append(Check("info", "Таблицы VOLT не переносились", ", ".join(volt)))
+        res.checks.append(Check("info", M("chk_volt"), ", ".join(volt)))
     for tag in METRIC_CACHE_TABLES:
         if tag in tgt:
             del tgt[tag]
-            res.checks.append(Check("info", f"{tag} удалён", "кэш метрик хинтованного шрифта устарел бы"))
+            res.checks.append(Check("info", M("chk_metric_removed", tag=tag), M("chk_metric_removed_detail")))
     for fld in MAXP_HINT_FIELDS:
         if hasattr(src["maxp"], fld):
             setattr(tgt["maxp"], fld, max(getattr(src["maxp"], fld), getattr(tgt["maxp"], fld, 0)))
     tgt["head"].flags = (tgt["head"].flags & ~0x18) | (src["head"].flags & 0x18)
-    res.actions.append("maxp (лимиты интерпретатора) и флаги head 3/4: из исходного шрифта")
+    res.actions.append(M("act_maxp"))
 
     tsi1, tsi3, tsi5 = newTable("TSI1"), newTable("TSI3"), newTable("TSI5")
     tsi1.glyphPrograms, tsi1.extraPrograms = n_asm, dict(src["TSI1"].extraPrograms)
     tsi3.glyphPrograms, tsi3.extraPrograms = n_talk, dict(src["TSI3"].extraPrograms)
     tsi5.glyphGrouping = n_groups
     tgt["TSI0"], tgt["TSI1"], tgt["TSI2"], tgt["TSI3"], tgt["TSI5"] = newTable("TSI0"), tsi1, newTable("TSI2"), tsi3, tsi5
-    res.actions.append("TSI0–TSI3, TSI5: собраны заново по именам глифов нового шрифта")
+    res.actions.append(M("act_tsi"))
 
     # ------------------------------------------------------------ compile
     out = tgt
@@ -791,9 +785,9 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
             import vttcompilepy as vtt
         except ImportError:
             vtt = None
-            res.checks.append(Check("warn", "vttcompilepy не установлен", "компиляция пропущена — скомпилируйте в VTT"))
+            res.checks.append(Check("warn", M("chk_no_vttcompilepy"), M("chk_no_vttcompilepy_detail")))
         if vtt is not None:
-            log("компиляция (vttcompilepy)…")
+            log("compiling (vttcompilepy)…")
             stripped: set = set()
             for _ in range(len(t_order) + 1):
                 try:
@@ -808,7 +802,7 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
                     res.compile_log.append(msg)
                     m = re.search(r"glyph (\d+)", msg)
                     if not m or int(m.group(1)) in stripped or int(m.group(1)) >= len(t_order):
-                        res.checks.append(Check("error", "Компиляция не прошла", msg))
+                        res.checks.append(Check("error", M("chk_compile_failed"), msg))
                         break
                     gid = int(m.group(1))
                     stripped.add(gid)
@@ -822,35 +816,35 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
                         n_asm[name] = ""
                     set_program(name, None)
                     gr = res.glyphs[name]
-                    gr.notes.append("ошибка компиляции, хинты сняты: " + msg)
+                    gr.notes.append(M("note_compile_error", msg=msg))
                     gr.status = COMPILE_ERROR
             if res.compiled:
-                ok_msg = "все глифы" if not stripped else f"после снятия хинтов с {len(stripped)} глифов"
-                res.checks.append(Check("ok" if not stripped else "warn", "Компиляция vttcompilepy прошла", ok_msg))
+                ok_msg = M("chk_compile_all") if not stripped else M("chk_compile_partial", n=len(stripped))
+                res.checks.append(Check("ok" if not stripped else "warn", M("chk_compile_ok"), ok_msg))
 
     # ------------------------------------------------------------ verification
-    log("проверка результата…")
+    log("verifying the result…")
     ref = TTFont(target)
     bad = []
     for n in t_order:
         a, b = ref["glyf"][n], out["glyf"][n]
         if a.isComposite() != b.isComposite():
-            bad.append(f"{n}: тип глифа")
+            bad.append(M("bad_type", n=n))
         elif a.isComposite():
             ca = [(c.glyphName, getattr(c, "x", None), getattr(c, "y", None),
                    tuple(round(v, 4) for row in getattr(c, "transform", []) for v in row)) for c in a.components]
             cb = [(c.glyphName, getattr(c, "x", None), getattr(c, "y", None),
                    tuple(round(v, 4) for row in getattr(c, "transform", []) for v in row)) for c in b.components]
             if ca != cb:
-                bad.append(f"{n}: компоненты {ca} ≠ {cb}")
+                bad.append(M("bad_components", n=n, a=str(ca), b=str(cb)))
         elif a.numberOfContours > 0:
             if list(a.coordinates) != list(b.coordinates) or list(a.endPtsOfContours) != list(b.endPtsOfContours):
-                bad.append(f"{n}: контур")
+                bad.append(M("bad_outline", n=n))
     if bad:
-        res.checks.append(Check("error", "Контуры или композиты в результате отличаются от целевого шрифта",
-                                "; ".join(bad[:20]) + (" …" if len(bad) > 20 else "")))
+        res.checks.append(Check("error", M("chk_outlines_differ"),
+                                M("chk_outlines_differ_detail", items=bad[:20], more=" …" if len(bad) > 20 else "")))
     else:
-        res.checks.append(Check("ok", "Контуры и композиты совпадают с целевым шрифтом", f"{len(t_order)} глифов"))
+        res.checks.append(Check("ok", M("chk_outlines_ok"), M("n_glyphs", n=len(t_order))))
     if res.compiled:
         skip = {"glyf", "loca", "maxp", "head", "gasp", "cvt ", "fpgm", "prep", "cvar"} | set(METRIC_CACHE_TABLES)
         diff = []
@@ -866,14 +860,13 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
                 pass
             diff.append(t)
         if diff:
-            res.checks.append(Check("warn", "Изменились таблицы, не связанные с хинтингом", ", ".join(diff)))
+            res.checks.append(Check("warn", M("chk_tables_changed"), ", ".join(diff)))
         else:
-            res.checks.append(Check("ok", "Остальные таблицы (gvar, GSUB, GPOS…) не изменены"))
+            res.checks.append(Check("ok", M("chk_tables_ok")))
         lost_prog = [n for n, r in res.glyphs.items() if r.status == TRANSFERRED and ti[n].kind == "simple"
                      and not program_bytes(out["glyf"][n])]
         if lost_prog:
-            res.checks.append(Check("warn", "У части перенесённых глифов пустой байткод после компиляции",
-                                    ", ".join(lost_prog[:30])))
+            res.checks.append(Check("warn", M("chk_empty_bytecode"), ", ".join(lost_prog[:30])))
         sizes = [len(program_bytes(out["glyf"][n])) for n in t_order]
         out["maxp"].maxSizeOfInstructions = max([out["maxp"].maxSizeOfInstructions] + sizes)
 

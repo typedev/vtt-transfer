@@ -1,74 +1,74 @@
 # vtt-transfer
 
-Переносит исходники VTT-хинтов из хинтованной версии TrueType-шрифта (статического или вариативного) в новую версию того же шрифта и пишет HTML-отчёт: что перенесено, что нужно дохинтовать, что проверить.
+Transfers VTT hinting sources from a hinted version of a TrueType font (static or variable) to a new version of the same font and writes an HTML report: what was transferred, what needs extra hinting, what to check.
 
-## Установка
+## Installation
 
-Глобально, чтобы `vtt-transfer` и `vtt-ship` работали из любой папки (`-e` — правки в коде подхватываются без переустановки):
+Globally, so that `vtt-transfer` and `vtt-ship` work from any folder (`-e` picks up code changes without reinstalling):
 
 ```sh
 uv tool install -e /path/to/vtt-transfer
 ```
 
-Или только локальное окружение проекта:
+Or only the project's local environment:
 
 ```sh
 cd /path/to/vtt-transfer
 uv sync
 ```
 
-## Использование
+## Usage
 
 ```sh
-vtt-transfer OLD.VTT.ttf NEW.ttf                     # после uv tool install
-uv run vtt-transfer OLD.VTT.ttf NEW.ttf              # из папки vtt-transfer
-uv run --project /path/to/vtt-transfer vtt-transfer OLD.VTT.ttf NEW.ttf   # из любой папки
+vtt-transfer OLD.VTT.ttf NEW.ttf                     # after uv tool install
+uv run vtt-transfer OLD.VTT.ttf NEW.ttf              # from the vtt-transfer folder
+uv run --project /path/to/vtt-transfer vtt-transfer OLD.VTT.ttf NEW.ttf   # from any folder
 ```
 
-Рядом с `NEW.ttf` появятся:
+Next to `NEW.ttf` you get:
 
-- `NEW.VTT.ttf` — новый шрифт с исходниками VTT (TSI0–TSI3, TSI5), `cvt`, `fpgm`, `prep`, `gasp` и `cvar`/`TSIC` (если были), скомпилированный через vttcompilepy. Открывается в VTT, дальше работа идёт как обычно.
-- `NEW.vtt-transfer.html` — отчёт.
+- `NEW.VTT.ttf` — the new font with VTT sources (TSI0–TSI3, TSI5), `cvt`, `fpgm`, `prep`, `gasp` and `cvar`/`TSIC` (if present), compiled with vttcompilepy. It opens in VTT and work continues as usual.
+- `NEW.vtt-transfer.html` — the report.
 
-Опции: `-o` путь результата, `--report` путь отчёта, `--no-compile` без компиляции, `--no-remap` без ремапа точек, `-q`.
+Options: `-o` output path, `--report` report path, `--report-lang en|ru` report language (default `ru`), `--no-compile` skip compilation, `--no-remap` no point remapping, `-q`.
 
-Код возврата: 0 — всё в порядке, 1 — есть ошибки проверки (см. отчёт), 2 — перенос невозможен (нет TSI-таблиц, другой UPM).
+Exit code: 0 — all good, 1 — verification errors (see the report), 2 — transfer impossible (no TSI tables, different UPM).
 
-## Как сопоставляются глифы
+## How glyphs are matched
 
-1. **По имени.** Если глиф исчез, ищется переименование: тот же Unicode и та же структура точек, либо единственный новый глиф с идентичными точками.
-2. **Структура не изменилась** (контуры, точки, on/off-curve, число компонентов): VTT Talk, ассемблер и байткод переносятся как есть. GID в заголовках обновляется.
-3. **Структура изменилась:** опорные точки из VTT Talk ищутся в новом контуре по точным координатам default-мастера, фантомные точки сдвигаются вместе с контуром. Если нашлись все — номера переписываются (статус «ремап»), иначе хинты снимаются, глиф попадает в «Перехинтовать», старый VTT Talk приложен в отчёте. Ремап поддерживает только команды с однозначными типами аргументов (Anchor/Link/Dist/Shift/Interpolate/IPAnchor/Align/NoRound/Delta/Smooth); всё остальное — в ручную работу.
-4. **Композиты:** код сборки (`OFFSET`/`SOFFSET`) всегда генерируется заново по новому `glyf` (GID, смещения, трансформации, USE_MY_METRICS), с префиксами (`OVERLAP[]` и т. п.) как в исходнике. Собственные инструкции композита сохраняются, только если не изменилась структура точек компонентов.
-5. **Новые простые глифы:** если точки совпадают с хинтованным старым глифом точно — копируются все хинты; если со сдвигом только по X (комбинируемые акценты из спейсинговых) — только Y-команды. Остальным character group назначается по аналогии с глифами той же категории Unicode в исходнике.
-6. **Новые композиты** хинтованы, если хинтованы все их компоненты; отчёт показывает, каких компонентов они ждут.
+1. **By name.** If a glyph is gone, a rename is looked for: the same Unicode and the same point structure, or a single new glyph with identical points.
+2. **Structure unchanged** (contours, points, on/off-curve, number of components): VTT Talk, assembly and bytecode are carried over as is. The GID in the headers is updated.
+3. **Structure changed:** the reference points of the VTT Talk are looked up in the new outline by exact default-master coordinates; phantom points move with the outline. If all are found, the numbers are rewritten (status "remapped"); otherwise the hints are removed, the glyph goes to "Re-hint", and the old VTT Talk is attached in the report. Remapping supports only commands with unambiguous argument types (Anchor/Link/Dist/Shift/Interpolate/IPAnchor/Align/NoRound/Delta/Smooth); everything else is manual work.
+4. **Composites:** the assembly code (`OFFSET`/`SOFFSET`) is always regenerated from the new `glyf` (GIDs, offsets, transformations, USE_MY_METRICS), with prefixes (`OVERLAP[]` etc.) as in the source. The composite's own instructions are kept only if the point structure of its components did not change.
+5. **New simple glyphs:** if the points exactly match a hinted old glyph, all hints are copied; if they are shifted along X only (combining accents made from spacing ones), only Y commands are copied. The rest get a character group by analogy with glyphs of the same Unicode category in the source.
+6. **New composites** are hinted if all their components are; the report shows which components they are waiting for.
 
-## Проверки
+## Checks
 
-После компиляции инструмент сверяет результат с новым шрифтом: контуры и композиты совпадают, таблицы, не связанные с хинтингом (`gvar`, `GSUB`, `GPOS`…), не изменились по содержанию. Ошибка компиляции в отдельном глифе снимает с него хинты и попадает в отчёт, остальное компилируется.
+After compilation the tool verifies the result against the new font: outlines and composites match, and tables unrelated to hinting (`gvar`, `GSUB`, `GPOS`…) have unchanged content. A compile error in a single glyph removes its hints and goes to the report; the rest is compiled.
 
-## Ограничения
+## Limitations
 
-- Ремап по координатам default-мастера: если точку сдвинули хотя бы на юнит, она считается потерянной. Это сделано намеренно.
-- Код композитов с привязкой по точкам (`ANCHOR`) генерируется, но помечается для ручной проверки.
-- Таблицы VOLT (TSIV и др.) не переносятся.
+- Remapping uses default-master coordinates: a point moved by even one unit is considered lost. This is intentional.
+- Composite code with point attachment (`ANCHOR`) is generated but flagged for manual review.
+- VOLT tables (TSIV etc.) are not transferred.
 
-## Проект автохинтера (.hprj)
+## Autohinter project (.hprj)
 
-Если рядом с исходником лежит проект VTThinter (`family.hprj` для `family.VTT.ttf`) или он передан через `--hprj`, рядом с результатом пишется обновлённая копия (`NEW.hprj`). Исходный файл не трогается; `--no-hprj` отключает обновление.
+If a VTThinter project lies next to the source (`family.hprj` for `family.VTT.ttf`) or is passed with `--hprj`, an updated copy (`NEW.hprj`) is written next to the result. The original file is not touched; `--no-hprj` disables the update.
 
-- Каждый класс сопоставляется с группой TSI5 по большинству его глифов (например: UpperCase → 2, LowerCase → 3, Figures → 4, Superiors → 1, Parens → 8, Accents → 9).
-- Переименованные глифы заменяются в списках на месте, удалённые убираются.
-- Новые простые глифы добавляются в класс своей группы (группа назначается так же, как в TSI5). Глифы группы 0 в классы не входят. Ставшие композитами остаются в списке и отмечаются в отчёте.
-- `TTFFileName`/`XMLFileName` переписываются на имя нового шрифта, если оно отличается.
-- Меняются только эти значения; форматирование и переводы строк (CRLF) сохраняются.
+- Each class is matched to a TSI5 group by the majority of its glyphs (for example: UpperCase → 2, LowerCase → 3, Figures → 4, Superiors → 1, Parens → 8, Accents → 9).
+- Renamed glyphs are replaced in the lists in place, removed ones are dropped.
+- New simple glyphs are added to the class of their group (the group is assigned the same way as in TSI5). Group 0 glyphs are not put into classes. Glyphs that became composites stay in the list and are flagged in the report.
+- `TTFFileName`/`XMLFileName` are rewritten to the new font's name if it differs.
+- Only these values change; formatting and line endings (CRLF) are preserved.
 
-## Релизные шрифты: vtt-ship
+## Release fonts: vtt-ship
 
 ```sh
-vtt-ship path/family-vf.VTT.ttf path/family-italic-vf.VTT.ttf [--woff2]   # или uv run vtt-ship …
+vtt-ship path/family-vf.VTT.ttf path/family-italic-vf.VTT.ttf [--woff2]   # or uv run vtt-ship …
 ```
 
-Компилирует исходники VTT (vttcompilepy, тот же компилятор, что в VTT) и пишет шрифт без таблиц TSI*: хинты, `cvt`, `fpgm`, `prep`, `gasp` остаются. Результат — в подпапку `hinted/` рядом с исходником под именем без `.VTT` (`-o DIR`, чтобы писать в другое место).
+Compiles the VTT sources (vttcompilepy, the same compiler as in VTT) and writes a font without the TSI* tables: hints, `cvt`, `fpgm`, `prep`, `gasp` stay. The result goes to a `hinted/` subfolder next to the source, named without `.VTT` (`-o DIR` to write elsewhere).
 
-Перед записью результат сверяется с нехинтованной сборкой дизайнера (по умолчанию `<имя без .VTT>.ttf` рядом, или `--reference`): контуры, композиты со смещениями и все таблицы, не относящиеся к хинтингу, должны совпадать. Это ловит устаревший код композитов в VTT (VTT собирает композиты из OFFSET в исходниках, а не из `glyf`). При расхождении или ошибке компиляции файл не записывается (`--force` — записать всё равно, `--no-check` — без сверки). Код возврата 1, если хоть один шрифт не собран.
+Before writing, the result is checked against the designer's unhinted build (by default `<name without .VTT>.ttf` next to it, or `--reference`): outlines, composites with offsets and all tables unrelated to hinting must match. This catches stale composite code in VTT (VTT builds composites from the OFFSET lines in the sources, not from `glyf`). On a mismatch or a compile error the file is not written (`--force` to write anyway, `--no-check` to skip the check). Exit code 1 if any font failed.

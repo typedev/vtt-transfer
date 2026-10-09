@@ -11,6 +11,7 @@ from fontTools.pens.svgPathPen import SVGPathPen
 
 from . import __version__
 from . import core as C
+from .i18n import DEFAULT_LANG, Translator
 
 E = html.escape
 
@@ -88,18 +89,20 @@ def ulabel(res, name):
 
 
 def script_of(res, name):
+    """Catalog key of the script section a new glyph is listed under."""
     cps = _cps(res.out_font, name)
     cp = cps[0] if cps else None
     if cp is None:
         info = C.GlyphInfo(name, "", unicodes=[])
         cp = C.codepoint_of(info)
     if cp is None:
-        return "Без Unicode (альтернаты, служебные)"
+        return "script_none"
     n = unicodedata.name(chr(cp), "")
     if 0x1EA0 <= cp <= 0x1EF9 or (n.startswith("LATIN") and any(w in n for w in ("HORN", "HOOK ABOVE", "DOT BELOW"))):
-        return "Вьетнамский"
-    return {"LATIN": "Латиница", "GREEK": "Греческий", "CYRILLIC": "Кириллица",
-            "COMBINING": "Комбинируемые знаки", "DIGIT": "Цифры"}.get(n.split(" ")[0] if n else "", "Прочее")
+        return "script_vietnamese"
+    return {"LATIN": "script_latin", "GREEK": "script_greek", "CYRILLIC": "script_cyrillic",
+            "COMBINING": "script_combining", "DIGIT": "script_digits"}.get(n.split(" ")[0] if n else "",
+                                                                          "script_other")
 
 
 def chips(names, cls=""):
@@ -108,44 +111,50 @@ def chips(names, cls=""):
     return '<div class="chips">' + "".join(f'<span class="chip {cls}">{E(n)}</span>' for n in names) + "</div>"
 
 
-def copybox(names, label="Имена списком"):
+def copybox(t, names):
     if not names:
         return ""
-    return (f'<details class="copy"><summary>{E(label)} ({len(names)})</summary>'
+    return (f'<details class="copy"><summary>{E(t("copy_names"))} ({len(names)})</summary>'
             f'<textarea readonly rows="3">{E(" ".join(names))}</textarea></details>')
 
 
-def used_in_html(r):
+def used_in_html(t, r):
     if not r.used_in:
         return ""
     names = ", ".join(r.used_in[:12]) + (" …" if len(r.used_in) > 12 else "")
-    return f'<p class="used">Используется в {len(r.used_in)} композитах: {E(names)}</p>'
+    return f'<p class="used">{t.h("card_used_in", n=len(r.used_in), names=names)}</p>'
 
 
-def card(res, r, new_d, old_d=None, show_old=False, extra=""):
+def card(t, res, r, new_d, old_d=None, show_old=False, extra=""):
     marks = r.lost_points if show_old else None
     svg = glyph_svg(new_d, r.name, old_d if show_old else None, r.source, marks, size=170 if show_old else 130)
-    notes = "".join(f"<li>{E(n)}</li>" for n in r.notes)
+    notes = "".join(f"<li>{E(t(n))}</li>" for n in r.notes)
     group = ""
     if r.group is not None:
-        group = f" · группа {r.group}"
+        group = t.h("card_group", g=r.group)
     talk = ""
     if r.old_asm:
-        talk = f'<details><summary>Старые инструкции композита</summary><pre>{E(r.old_asm)}</pre></details>'
+        talk = f'<details><summary>{E(t("card_old_asm"))}</summary><pre>{E(r.old_asm)}</pre></details>'
     elif r.old_talk and C.vtalk.has_code(r.old_talk) and r.status in (C.REHINT, C.REMAPPED, C.TYPE_CHANGED,
                                                                      C.COMPILE_ERROR, C.COMPOSITE_DROPPED):
-        t = r.old_talk.replace("\r", "\n")
-        talk = f'<details><summary>Старый VTT Talk</summary><pre>{E(t)}</pre></details>'
+        old = r.old_talk.replace("\r", "\n")
+        talk = f'<details><summary>{E(t("card_old_talk"))}</summary><pre>{E(old)}</pre></details>'
     return (f'<div class="card"><div class="thumb">{svg}</div><div class="meta">'
             f'<div class="nm">{E(r.name)}</div><div class="sub">{E(ulabel(res, r.name))}</div>'
             f'<div class="sub">GID {r.gid}{group}</div>'
-            f'<ul class="notes">{notes}</ul>{extra}{used_in_html(r)}{talk}</div></div>')
+            f'<ul class="notes">{notes}</ul>{extra}{used_in_html(t, r)}{talk}</div></div>')
 
 
-def section(id_, title, intro, body, count=None, open_=True):
+def sub(text):
+    return f"<div class='sub'>{text}</div>"
+
+
+def section(t, id_, intro_key=None, body="", count=None, open_=True, **intro_params):
+    """A collapsible report section; its title and intro come from the `sec_<id>` catalog keys."""
     c = f' <span class="count">{count}</span>' if count is not None else ""
-    return (f'<section id="{id_}"><details {"open" if open_ else ""}><summary><h2>{E(title)}{c}</h2></summary>'
-            f'<p class="intro">{intro}</p>{body}</details></section>')
+    intro = t.h(intro_key or f"sec_{id_}_intro", **intro_params)
+    return (f'<section id="{id_}"><details {"open" if open_ else ""}><summary><h2>{E(t(f"sec_{id_}"))}{c}</h2>'
+            f'</summary><p class="intro">{intro}</p>{body}</details></section>')
 
 
 # ---------------------------------------------------------------- report
@@ -195,7 +204,8 @@ border-top:3px dashed var(--old);vertical-align:middle;margin-right:4px}
 """
 
 
-def build(res: C.TransferResult) -> str:
+def build(res: C.TransferResult, lang: str = DEFAULT_LANG) -> str:
+    t = Translator(lang)
     new_d, old_d = Drawer(res.out_font), Drawer(res.src_font)
     hp = getattr(res, "hprj", None)
     G = res.glyphs
@@ -221,98 +231,77 @@ def build(res: C.TransferResult) -> str:
     hinted_src_total = sum(1 for r in G.values() if r.hinted_in_source and r.status != C.NEW_TWIN) + len(removed_hinted)
 
     stem = res.output_path.name
-    out = [f"<!doctype html><html lang='ru'><head><meta charset='utf-8'>"
+    out = [f"<!doctype html><html lang='{t.lang}'><head><meta charset='utf-8'>"
            f"<meta name='viewport' content='width=device-width,initial-scale=1'>"
-           f"<title>Перенос VTT-хинтов</title><style>{CSS}</style></head><body><main>"]
-    out.append(f"<h1>Перенос VTT-хинтов: {E(stem)}</h1>")
-    out.append(f"<div class='paths'>Исходник: <b>{E(str(res.source_path))}</b><br>"
-               f"Новая версия: <b>{E(str(res.target_path))}</b><br>"
-               f"Результат: <b>{E(str(res.output_path))}</b><br>"
-               + (f"Проект автохинтера: <b>{E(str(hp.output))}</b> (из {E(str(hp.source))})<br>" if hp else "") +
+           f"<title>{E(t('r_title'))}</title><style>{CSS}</style></head><body><main>"]
+    out.append(f"<h1>{t.h('r_h1', stem=stem)}</h1>")
+    out.append(f"<div class='paths'>{t.h('r_source', p=res.source_path)}<br>"
+               f"{t.h('r_target', p=res.target_path)}<br>"
+               f"{t.h('r_output', p=res.output_path)}<br>"
+               + (f"{t.h('r_hprj', out=hp.output, src=hp.source)}<br>" if hp else "") +
                f"{datetime.datetime.now():%Y-%m-%d %H:%M} · vtt-transfer {__version__}"
-               f"{' · скомпилировано vttcompilepy' if res.compiled else ' · без компиляции'}</div>")
+               f" · {E(t('r_compiled' if res.compiled else 'r_not_compiled'))}</div>")
 
     stats = [
-        ("good", len(transferred), f"хинтованных глифов перенесено (из {hinted_src_total})"),
-        ("good", len(remapped), "перенесено с ремапом точек"),
-        ("todo", len(must_hint), "перехинтовать"),
-        ("todo" if dropped else "good", len(dropped), "композитов: восстановить свои инструкции"),
-        ("good", len(twins), "новых глифов получили хинты двойника"),
-        ("todo", len(new_simple), "новых простых глифов без хинтов"),
-        ("todo" if new_comp_wait else "good", len(new_comp), f"новых композитов ({len(new_comp_wait)} ждут компоненты)"),
-        ("", len(res.removed), "глифов удалено"),
+        ("good", len(transferred), t("st_transferred", total=hinted_src_total)),
+        ("good", len(remapped), t("st_remapped")),
+        ("todo", len(must_hint), t("st_rehint")),
+        ("todo" if dropped else "good", len(dropped), t("st_dropped")),
+        ("good", len(twins), t("st_twins")),
+        ("todo", len(new_simple), t("st_new_simple")),
+        ("todo" if new_comp_wait else "good", len(new_comp), t("st_new_comp", n=len(new_comp_wait))),
+        ("", len(res.removed), t("st_removed")),
     ]
     out.append("<div class='summary'>" + "".join(
         f"<div class='stat {c}'><div class='n'>{n}</div><div class='l'>{E(l)}</div></div>" for c, n, l in stats) + "</div>")
 
     # what to do
     errs = [c for c in res.checks if c.level == "error"]
-    todo = []
-    todo.append(f"Открыть <b>{E(stem)}</b> в VTT, выполнить <i>Compile everything</i> и убедиться, что ошибок нет.")
+    todo = [t.h("todo_open", stem=stem)]
     if errs:
-        todo.append(f"<b>Есть ошибки проверки ({len(errs)})</b> — см. раздел «Проверки» ниже, до начала работы.")
+        todo.append(t.h("todo_errors", n=len(errs)))
     if must_hint:
-        todo.append(f"<a href='#rehint'>Перехинтовать {len(must_hint)} глифов</a>, у которых изменилась структура "
-                    "точек: хинты с них сняты, старый VTT Talk приложен к каждой карточке.")
+        todo.append(t.h("todo_rehint", n=len(must_hint)))
     if twins:
-        todo.append(f"<a href='#twins'>Глянуть {len(twins)} новых глифов</a>, которым хинты скопированы с "
-                    "идентичного или сдвинутого по X старого глифа.")
+        todo.append(t.h("todo_twins", n=len(twins)))
     if dropped:
-        todo.append(f"<a href='#dropped'>Восстановить инструкции у {len(dropped)} композитов</a> "
-                    "(обычно позиционирование диакритики): компоненты хинтованы, сняты только команды самого композита.")
+        todo.append(t.h("todo_dropped", n=len(dropped)))
     if new_simple:
-        todo.append(f"<a href='#new'>Отхинтовать {len(new_simple)} новых простых глифов</a>. "
-                    "Character groups назначены автоматически — проверьте.")
+        todo.append(t.h("todo_new", n=len(new_simple)))
     if new_comp_wait:
-        todo.append(f"<a href='#newcomp'>{len(new_comp_wait)} новых композитов</a> станут хинтованными, когда будут "
-                    "отхинтованы их компоненты.")
+        todo.append(t.h("todo_newcomp_wait", n=len(new_comp_wait)))
     if new_comp_ready:
-        todo.append(f"Просмотреть {len(new_comp_ready)} новых композитов из уже хинтованных компонентов — "
-                    "обычно дохинтовка не нужна, но стоит проверить положение диакритики на мелких кеглях.")
+        todo.append(t.h("todo_newcomp_ready", n=len(new_comp_ready)))
     if hp:
-        n_add = sum(len(c.added) for c in hp.classes)
-        todo.append(f"<a href='#hprj'>Проверить обновлённый {E(hp.output.name)}</a>: {n_add} новых глифов "
-                    "добавлены в классы автохинтера.")
+        todo.append(t.h("todo_hprj", name=hp.output.name, n=sum(len(c.added) for c in hp.classes)))
     if remapped:
-        todo.append(f"<a href='#remapped'>Проверить {len(remapped)} глифов с ремапом точек</a>.")
+        todo.append(t.h("todo_remapped", n=len(remapped)))
     if geom:
-        todo.append(f"<a href='#geom'>Пробежать глазами {len(geom)} глифов</a>: структура та же, хинты перенесены, "
-                    "но контур сдвинут.")
-    out.append(section("todo", "Что сделать", "Порядок работы оператора.",
-                       "<ol class='todo'>" + "".join(f"<li>{t}</li>" for t in todo) + "</ol>"))
+        todo.append(t.h("todo_geom", n=len(geom)))
+    out.append(section(t, "todo", body="<ol class='todo'>" + "".join(f"<li>{x}</li>" for x in todo) + "</ol>"))
 
     # checks
-    lvl_names = {"ok": "OK", "info": "Инфо", "warn": "Внимание", "error": "Ошибка"}
     order = {"error": 0, "warn": 1, "info": 2, "ok": 3}
-    rows = "".join(f"<tr><td class='lvl {c.level}'>{lvl_names[c.level]}</td><td>{E(c.title)}</td>"
-                   f"<td>{E(c.detail)}</td></tr>" for c in sorted(res.checks, key=lambda c: order[c.level]))
-    out.append(section("checks", "Проверки", "Совместимость шрифтов и проверка результата после компиляции.",
-                       f"<table><tr><th></th><th>Проверка</th><th>Детали</th></tr>{rows}</table>"))
+    rows = "".join(f"<tr><td class='lvl {c.level}'>{E(t('lvl_' + c.level))}</td><td>{E(t(c.title))}</td>"
+                   f"<td>{E(t(c.detail))}</td></tr>" for c in sorted(res.checks, key=lambda c: order[c.level]))
+    out.append(section(t, "checks", body=f"<table><tr><th></th><th>{E(t('th_check'))}</th>"
+                                         f"<th>{E(t('th_details'))}</th></tr>{rows}</table>"))
 
-    legend = ("<p class='legend'><i></i>старый контур (пунктир), заливка — новый; "
-              "красные точки — опорные точки старых хинтов, которых нет в новом контуре.</p>")
+    legend = f"<p class='legend'>{t.h('legend')}</p>"
     body = legend + "<div class='grid'>" + "".join(
-        card(res, r, new_d, old_d, show_old=r.source is not None) for r in must_hint) + "</div>"
-    body += copybox([r.name for r in must_hint])
-    out.append(section("rehint", "Перехинтовать", "Глифы, которые были хинтованы, но их точечная структура "
-                       "изменилась так, что номера опорных точек восстановить нельзя. Хинты сняты.",
-                       body, len(must_hint)))
+        card(t, res, r, new_d, old_d, show_old=r.source is not None) for r in must_hint) + "</div>"
+    body += copybox(t, [r.name for r in must_hint])
+    out.append(section(t, "rehint", body=body, count=len(must_hint)))
 
     if dropped:
-        body = "<div class='grid'>" + "".join(card(res, r, new_d) for r in dropped) + "</div>"
-        body += copybox([r.name for r in dropped])
-        out.append(section("dropped", "Композиты: восстановить собственные инструкции",
-                           "У одного из компонентов изменилось число точек, поэтому команды композита "
-                           "(SHC, CALL и т. п. после OFFSET) ссылались бы не на те точки и контуры. "
-                           "Они сняты; сборка и хинты компонентов на месте. Старый код приложен.",
-                           body, len(dropped)))
+        body = "<div class='grid'>" + "".join(card(t, res, r, new_d) for r in dropped) + "</div>"
+        body += copybox(t, [r.name for r in dropped])
+        out.append(section(t, "dropped", body=body, count=len(dropped)))
 
     if twins:
-        rows = "".join(f"<tr><td>{E(r.name)}</td><td>← {E(r.source)}</td><td>{E('; '.join(r.notes))}</td></tr>"
-                       for r in twins)
-        out.append(section("twins", "Новые глифы с хинтами двойника", "Точки совпадают с хинтованным глифом "
-                           "старой версии — точно (переименованная копия) или со сдвигом по X (например, "
-                           "комбинируемый акцент из спейсингового). Во втором случае перенесены только Y-хинты.", f"<table>{rows}</table>", len(twins), open_=False))
+        rows = "".join(f"<tr><td>{E(r.name)}</td><td>← {E(r.source)}</td>"
+                       f"<td>{E('; '.join(t(n) for n in r.notes))}</td></tr>" for r in twins)
+        out.append(section(t, "twins", body=f"<table>{rows}</table>", count=len(twins), open_=False))
 
     # new simple, by script
     by_script: dict = {}
@@ -320,110 +309,95 @@ def build(res: C.TransferResult) -> str:
         by_script.setdefault(script_of(res, r.name), []).append(r)
     body = ""
     for scr, items in sorted(by_script.items(), key=lambda x: -len(x[1])):
-        cards = "".join(card(res, r, new_d, extra=f"<div class='sub'>{E(r.group_reason)}</div>") for r in items)
-        body += f"<h3>{E(scr)} · {len(items)}</h3><div class='grid'>{cards}</div>"
-    body += copybox([r.name for r in new_simple])
-    out.append(section("new", "Новые простые глифы", "Хинтов нет; внутри раздела сначала те, что используются в большем числе композитов. Группа (character group) назначена по аналогии "
-                       "с глифами той же категории в исходнике.", body, len(new_simple)))
+        cards = "".join(card(t, res, r, new_d, extra=sub(E(t(r.group_reason)))) for r in items)
+        body += f"<h3>{E(t(scr))} · {len(items)}</h3><div class='grid'>{cards}</div>"
+    body += copybox(t, [r.name for r in new_simple])
+    out.append(section(t, "new", body=body, count=len(new_simple)))
 
     body = ""
     if new_comp_wait:
-        cards = "".join(card(res, r, new_d, extra="<div class='sub'>ждёт: " + E(", ".join(r.unhinted_components))
-                             + "</div>") for r in new_comp_wait)
-        body += f"<h3>Ждут нехинтованные компоненты · {len(new_comp_wait)}</h3><div class='grid'>{cards}</div>"
+        cards = "".join(card(t, res, r, new_d, extra=sub(t.h("card_waiting", names=", ".join(r.unhinted_components))))
+                        for r in new_comp_wait)
+        body += f"<h3>{t.h('newcomp_wait', n=len(new_comp_wait))}</h3><div class='grid'>{cards}</div>"
         waiting = sorted({c for r in new_comp_wait for c in r.unhinted_components})
-        body += f"<p class='muted'>Компоненты, от которых они зависят ({len(waiting)}):</p>" + chips(waiting)
-    body += f"<h3>Из хинтованных компонентов · {len(new_comp_ready)}</h3>" + chips([r.name for r in new_comp_ready])
-    body += copybox([r.name for r in new_comp])
-    out.append(section("newcomp", "Новые композиты", "Код сборки (OFFSET) сгенерирован по новому шрифту в стиле "
-                       f"исходника ({E(res.composite_style)}). Компоненты несут свои хинты, поэтому композит "
-                       "хинтован, если хинтованы все его компоненты.", body, len(new_comp)))
+        body += f"<p class='muted'>{t.h('newcomp_deps', n=len(waiting))}</p>" + chips(waiting)
+    body += f"<h3>{t.h('newcomp_ready', n=len(new_comp_ready))}</h3>" + chips([r.name for r in new_comp_ready])
+    body += copybox(t, [r.name for r in new_comp])
+    out.append(section(t, "newcomp", body=body, count=len(new_comp), style=res.composite_style))
 
     if remapped:
         cards = []
         for r in remapped:
             mp = ", ".join(f"{a}→{b}" for a, b in sorted(r.mapping.items()))
-            cards.append(card(res, r, new_d, old_d, show_old=True,
-                              extra=f"<div class='sub'>точки: {E(mp) or 'номера не изменились'}</div>"))
-        out.append(section("remapped", "Перенесено с ремапом точек", "Контур изменился, но все опорные точки "
-                           "нашлись в новом контуре по точным координатам; номера в VTT Talk переписаны, "
-                           "ассемблер пересобран компилятором. Проверьте визуально.",
-                           "<div class='grid'>" + "".join(cards) + "</div>", len(remapped)))
+            cards.append(card(t, res, r, new_d, old_d, show_old=True,
+                              extra=sub(t.h("card_points", map=mp or t("card_points_same")))))
+        out.append(section(t, "remapped", body="<div class='grid'>" + "".join(cards) + "</div>",
+                           count=len(remapped)))
 
     if tc_comp:
-        body = "<div class='grid'>" + "".join(card(res, r, new_d, extra=(
-            "<div class='sub'>ждёт: " + E(", ".join(r.unhinted_components)) + "</div>" if r.unhinted_components
-            else "<div class='sub'>все компоненты хинтованы</div>")) for r in tc_comp) + "</div>"
-        out.append(section("typechanged", "Стали композитами", "Раньше были простыми глифами со своими хинтами, "
-                           "теперь собраны из компонентов.", body, len(tc_comp)))
+        body = "<div class='grid'>" + "".join(card(t, res, r, new_d, extra=sub(
+            t.h("card_waiting", names=", ".join(r.unhinted_components)) if r.unhinted_components
+            else E(t("card_all_hinted")))) for r in tc_comp) + "</div>"
+        out.append(section(t, "typechanged", body=body, count=len(tc_comp)))
 
     if relinked:
-        rows = "".join(f"<tr><td>{E(r.name)}</td><td>{E('; '.join(r.notes))}</td></tr>" for r in relinked)
-        out.append(section("relinked", "Композиты с изменённой сборкой", "Хинты перенесены, код сборки (OFFSET) "
-                           "обновлён по новому шрифту.", f"<table>{rows}</table>", len(relinked), open_=False))
+        rows = "".join(f"<tr><td>{E(r.name)}</td><td>{E('; '.join(t(n) for n in r.notes))}</td></tr>"
+                       for r in relinked)
+        out.append(section(t, "relinked", body=f"<table>{rows}</table>", count=len(relinked), open_=False))
 
     if geom:
-        out.append(section("geom", "Контур сдвинут при той же структуре", "Хинты перенесены как есть. "
-                           "Стоит посмотреть на мелких кеглях.", chips([r.name for r in geom]) +
-                           copybox([r.name for r in geom]), len(geom), open_=False))
+        out.append(section(t, "geom", body=chips([r.name for r in geom]) + copybox(t, [r.name for r in geom]),
+                           count=len(geom), open_=False))
 
     if changed_unhinted:
-        out.append(section("changedunhinted", "Структура изменилась, хинтов не было и раньше",
-                           "Ничего не потеряно.", chips([r.name for r in changed_unhinted]),
-                           len(changed_unhinted), open_=False))
+        out.append(section(t, "changedunhinted", body=chips([r.name for r in changed_unhinted]),
+                           count=len(changed_unhinted), open_=False))
 
     body = ""
     if res.renames:
-        body += "<h3>Переименования</h3><table>" + "".join(
+        body += f"<h3>{E(t('names_renamed'))}</h3><table>" + "".join(
             f"<tr><td>{E(a)}</td><td>→ {E(b)}</td></tr>" for a, b in res.renames.items()) + "</table>"
-    body += "<h3>Удалены из новой версии</h3>" + chips(
-        [r.name + (" (был хинтован)" if r.hinted_in_source else "") for r in res.removed])
-    out.append(section("names", "Переименования и удаления", "Глифы сопоставляются по именам; переименования "
-                       "определены по Unicode и совпадению структуры.", body,
-                       len(res.renames) + len(res.removed), open_=False))
+    body += f"<h3>{E(t('names_removed'))}</h3>" + chips(
+        [t("names_was_hinted", n=r.name) if r.hinted_in_source else r.name for r in res.removed])
+    out.append(section(t, "names", body=body, count=len(res.renames) + len(res.removed), open_=False))
 
-    out.append(section("unhinted", "Все нехинтованные простые глифы результата",
-                       "Включая те, что не были хинтованы и в исходнике.",
-                       chips(res.still_unhinted_simple) + copybox(res.still_unhinted_simple),
-                       len(res.still_unhinted_simple), open_=False))
+    out.append(section(t, "unhinted",
+                       body=chips(res.still_unhinted_simple) + copybox(t, res.still_unhinted_simple),
+                       count=len(res.still_unhinted_simple), open_=False))
 
     rows = "".join(f"<tr><td>{g}</td><td>{E(' '.join(ex))}</td>"
                    f"<td>{sum(1 for r in G.values() if r.group == g and r.group_reason)}</td></tr>"
                    for g, ex in sorted(res.groups.items()))
-    out.append(section("groups", "Character groups", "Номера групп из TSI5 исходника и примеры глифов. "
-                       "Последняя колонка — сколько глифов получили группу автоматически.",
-                       f"<table><tr><th>Группа</th><th>Примеры в исходнике</th><th>Назначено</th></tr>{rows}</table>",
-                       open_=False))
+    out.append(section(t, "groups", body=f"<table><tr><th>{E(t('th_group'))}</th><th>{E(t('th_examples'))}</th>"
+                                         f"<th>{E(t('th_assigned'))}</th></tr>{rows}</table>", open_=False))
 
     if hp:
         rows = ""
         for c in hp.classes:
             parts = []
             if c.added:
-                parts.append(f"<b>добавлены ({len(c.added)}):</b> " + E(" ".join(c.added)))
+                parts.append(t.h("hprj_added", n=len(c.added), names=" ".join(c.added)))
             if c.renamed:
-                parts.append("<b>переименованы:</b> " + E(", ".join(f"{a} → {b}" for a, b in c.renamed)))
+                parts.append(t.h("hprj_renamed", pairs=", ".join(f"{a} → {b}" for a, b in c.renamed)))
             if c.removed:
-                parts.append("<b>удалены (нет в новой версии):</b> " + E(" ".join(c.removed)))
+                parts.append(t.h("hprj_removed", names=" ".join(c.removed)))
             if c.now_composite:
-                parts.append("<b>теперь композиты, оставлены в списке:</b> " + E(" ".join(c.now_composite)))
+                parts.append(t.h("hprj_now_composite", names=" ".join(c.now_composite)))
+            changes = "<br>".join(parts) or f"<span class=muted>{E(t('hprj_unchanged'))}</span>"
             rows += (f"<tr><td><b>{E(c.name)}</b></td><td>{c.group if c.group is not None else '—'}</td>"
-                     f"<td>{c.count}</td><td>{'<br>'.join(parts) or '<span class=muted>без изменений</span>'}</td></tr>")
-        body = ("<table><tr><th>Класс</th><th>Группа TSI5</th><th>Глифов</th><th>Изменения</th></tr>"
-                f"{rows}</table>")
+                     f"<td>{c.count}</td><td>{changes}</td></tr>")
+        body = (f"<table><tr><th>{E(t('th_class'))}</th><th>{E(t('th_tsi5_group'))}</th>"
+                f"<th>{E(t('th_glyphs'))}</th><th>{E(t('th_changes'))}</th></tr>{rows}</table>")
         if hp.unassigned:
-            body += ("<p class='muted'>Новые глифы, чьей группе не соответствует ни один класс (не добавлены):</p>"
-                     + chips([f"{n} (гр. {g})" for n, g in hp.unassigned]))
+            body += (f"<p class='muted'>{t.h('hprj_unassigned')}</p>"
+                     + chips([t("hprj_glyph_group", n=n, g=g) for n, g in hp.unassigned]))
         if hp.files:
             body += "<p class='muted'>" + "; ".join(E(f"{f}: {a} → {b}") for f, a, b in hp.files) + "</p>"
-        out.append(section("hprj", "Проект автохинтера (.hprj)",
-                           "Классы сопоставлены с группами TSI5 по большинству глифов класса. Новые простые глифы "
-                           "добавлены в класс своей группы; глифы группы 0 (Other) в классы не входят.",
-                           body, sum(len(c.added) for c in hp.classes)))
+        out.append(section(t, "hprj", body=body, count=sum(len(c.added) for c in hp.classes)))
 
-    tech = "<ul>" + "".join(f"<li>{E(a)}</li>" for a in res.actions) + "</ul>"
+    tech = "<ul>" + "".join(f"<li>{E(t(a))}</li>" for a in res.actions) + "</ul>"
     if res.compile_log:
-        tech += "<h3>Сообщения компилятора</h3><pre>" + E("\n".join(res.compile_log)) + "</pre>"
-    out.append(section("tech", "Технические детали", "Что именно было сделано со шрифтом.", tech, open_=False))
+        tech += f"<h3>{E(t('tech_compiler'))}</h3><pre>" + E("\n".join(res.compile_log)) + "</pre>"
+    out.append(section(t, "tech", body=tech, open_=False))
     out.append("</main></body></html>")
     return "".join(out)

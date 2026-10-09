@@ -29,26 +29,26 @@ def compare(ref: TTFont, out: TTFont) -> list[str]:
     """Differences that are not hinting: outlines, composites, other tables."""
     issues = []
     if ref.getGlyphOrder() != out.getGlyphOrder():
-        return ["порядок/набор глифов отличается"]
+        return ["glyph order/set differs"]
     bad = []
     for n in ref.getGlyphOrder():
         a, b = ref["glyf"][n], out["glyf"][n]
         if a.isComposite() != b.isComposite():
-            bad.append(f"{n} (тип)")
+            bad.append(f"{n} (type)")
         elif a.isComposite():
             if [component_key(c) for c in a.components] != [component_key(c) for c in b.components]:
-                bad.append(f"{n} (компоненты/смещения)")
+                bad.append(f"{n} (components/offsets)")
         elif a.numberOfContours > 0:
             if list(a.coordinates) != list(b.coordinates) or list(a.endPtsOfContours) != list(b.endPtsOfContours):
-                bad.append(f"{n} (контур)")
+                bad.append(f"{n} (outline)")
     if bad:
-        issues.append(f"глифы отличаются ({len(bad)}): " + ", ".join(bad[:15]) + (" …" if len(bad) > 15 else ""))
+        issues.append(f"glyphs differ ({len(bad)}): " + ", ".join(bad[:15]) + (" …" if len(bad) > 15 else ""))
     tables = []
     for t in ref.keys():
         if t == "GlyphOrder" or t in HINT_TABLES or t in SOURCE_TABLES or t in METRIC_CACHE_TABLES:
             continue
         if t not in out:
-            tables.append(f"{t} (нет)")
+            tables.append(f"{t} (missing)")
             continue
         try:
             if ref[t].compile(ref) != out[t].compile(out):
@@ -56,21 +56,21 @@ def compare(ref: TTFont, out: TTFont) -> list[str]:
         except Exception as e:  # pragma: no cover - diagnostic only
             tables.append(f"{t} ({e})")
     if tables:
-        issues.append("таблицы отличаются: " + ", ".join(tables))
+        issues.append("tables differ: " + ", ".join(tables))
     return issues
 
 
 def ship_one(src: Path, out_path: Path, reference: Path | None, woff2: bool, log) -> bool:
     import vttcompilepy as vtt
 
-    log(f"{src.name}: компиляция…")
+    log(f"{src.name}: compiling…")
     try:
         c = vtt.Compiler.from_file(src)
         c.compile_all()
     except vtt.CompileError as e:
         msg = e.args[0] if e.args else str(e)
         msg = (msg.decode("utf-8", "replace") if isinstance(msg, bytes) else str(msg)).strip()
-        print(f"✗ {src}: ошибка компиляции — {msg}", file=sys.stderr)
+        print(f"✗ {src}: compile error — {msg}", file=sys.stderr)
         return False
     font = c.get_ttfont(vtt.StripLevel.STRIP_SOURCE)
 
@@ -86,28 +86,28 @@ def ship_one(src: Path, out_path: Path, reference: Path | None, woff2: bool, log
     ok = True
     notes = []
     if missing:
-        notes.append("нет таблиц " + ", ".join(t.strip() for t in missing) + " — шрифт не хинтован")
+        notes.append("no " + ", ".join(t.strip() for t in missing) + " tables — the font is not hinted")
         ok = False
     if "gasp" not in font:
-        notes.append("нет gasp")
+        notes.append("no gasp")
     if reference is not None:
         issues = compare(TTFont(reference), font)
         if issues:
             ok = False
-            notes += [f"не совпадает с {reference.name}: {i}" for i in issues]
+            notes += [f"does not match {reference.name}: {i}" for i in issues]
         else:
-            notes.append(f"контуры, композиты и остальные таблицы совпадают с {reference.name}")
+            notes.append(f"outlines, composites and other tables match {reference.name}")
 
     if not ok:
         print(f"✗ {src}: " + "; ".join(notes), file=sys.stderr)
-        print("  файл не записан (--force, чтобы записать всё равно)", file=sys.stderr)
+        print("  file not written (use --force to write it anyway)", file=sys.stderr)
         return False
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     font.save(out_path)
     print(f"✓ {out_path}")
-    print(f"  байткод у {hinted} из {len(order)} глифов"
-          + (f"; вырезаны также {', '.join(leftovers)}" if leftovers else ""))
+    print(f"  bytecode in {hinted} of {len(order)} glyphs"
+          + (f"; also stripped {', '.join(leftovers)}" if leftovers else ""))
     for n in notes:
         print(f"  {n}")
     if woff2:
@@ -121,48 +121,48 @@ def ship_one(src: Path, out_path: Path, reference: Path | None, woff2: bool, log
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         prog="vtt-ship",
-        description="Компилирует исходники VTT и пишет релизные TTF без таблиц TSI* (хинты остаются).",
+        description="Compiles VTT sources and writes release TTFs without the TSI* tables (hints are kept).",
     )
-    p.add_argument("fonts", nargs="+", type=Path, help="шрифты с исходниками VTT (*.VTT.ttf)")
+    p.add_argument("fonts", nargs="+", type=Path, help="fonts with VTT sources (*.VTT.ttf)")
     p.add_argument("-o", "--output-dir", type=Path,
-                   help="куда писать (по умолчанию подпапка hinted/ рядом с каждым шрифтом)")
+                   help="output directory (default: hinted/ next to each font)")
     p.add_argument("--reference", type=Path, action="append",
-                   help="нехинтованная сборка для сверки контуров (по умолчанию <имя без .VTT>.ttf рядом, если есть); "
-                        "можно указать несколько раз в порядке шрифтов")
-    p.add_argument("--no-check", action="store_true", help="не сверять с нехинтованной сборкой")
-    p.add_argument("--force", action="store_true", help="записать, даже если сверка нашла расхождения")
-    p.add_argument("--woff2", action="store_true", help="дополнительно записать .woff2")
+                   help="unhinted build to check outlines against (default: <name without .VTT>.ttf next to the font, "
+                        "if present); repeat once per font, in the same order")
+    p.add_argument("--no-check", action="store_true", help="do not check against the unhinted build")
+    p.add_argument("--force", action="store_true", help="write even if the check found differences")
+    p.add_argument("--woff2", action="store_true", help="also write .woff2")
     p.add_argument("-q", "--quiet", action="store_true")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     a = p.parse_args(argv)
     log = (lambda *m: None) if a.quiet else (lambda *m: print("·", *m, file=sys.stderr))
     if a.reference and len(a.reference) != len(a.fonts):
-        p.error("--reference нужно указать для каждого шрифта")
+        p.error("--reference must be given for every font")
 
     failed = 0
     for i, src in enumerate(a.fonts):
         if not src.is_file():
-            print(f"✗ файл не найден: {src}", file=sys.stderr)
+            print(f"✗ file not found: {src}", file=sys.stderr)
             failed += 1
             continue
         name = strip_vtt(src.name)
         out_dir = a.output_dir or src.parent / "hinted"
         out_path = out_dir / name
         if out_path.resolve() == src.resolve():
-            p.error(f"результат перезаписал бы исходник: {out_path}")
+            p.error(f"the output would overwrite the source: {out_path}")
         ref = None
         if not a.no_check:
             ref = a.reference[i] if a.reference else src.with_name(name)
             if not ref.is_file() or ref.resolve() == src.resolve():
                 if a.reference:
-                    p.error(f"файл не найден: {ref}")
-                log(f"{src.name}: нехинтованной сборки {ref.name} рядом нет — сверка пропущена")
+                    p.error(f"file not found: {ref}")
+                log(f"{src.name}: no unhinted build {ref.name} next to it — check skipped")
                 ref = None
         if a.force and ref is not None:
             ok = ship_one(src, out_path, None, a.woff2, log)
             issues = compare(TTFont(ref), TTFont(out_path)) if ok else []
             for iss in issues:
-                print(f"  ! не совпадает с {ref.name}: {iss}")
+                print(f"  ! does not match {ref.name}: {iss}")
         else:
             ok = ship_one(src, out_path, ref, a.woff2, log)
         failed += 0 if ok else 1
