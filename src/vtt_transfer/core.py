@@ -497,6 +497,86 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
             lines += body
         return csep.join(lines), notes
 
+    talk_header_re = re.compile(r"/\*\s*VTTTalk glyph[^*]*\*/\s*")
+
+    def component_talk(sname, gid):
+        """VTT Talk of a source composite assembled from its components' talk, with point numbers
+        shifted into the flattened point list. None if no component has talk.
+
+        Returns (talk, refs, total, lost, issues): refs are the flat point numbers of the components
+        that could be shifted, total counts all reference points, lost are points that cannot exist
+        in a flat glyph (component phantom points with no glyph phantom at the same position),
+        issues make the talk unusable."""
+        root_n = si[sname].npoints
+
+        def phantoms(name, dx=0, dy=0):
+            """Horizontal phantom points (origin, advance) of a glyph, moved by (dx, dy)."""
+            adv, lsb = src["hmtx"][name]
+            x0 = getattr(src["glyf"][name], "xMin", 0) - lsb + dx
+            return [(x0, dy), (x0 + adv, dy)]
+
+        root_ph = phantoms(sname)
+        parts, lost, issues = [], [], []
+        flat_refs: set = set()
+        total = 0
+        hinted = False
+
+        def walk(name, offset, pos, transformed, depth):
+            nonlocal hinted, total
+            g = src["glyf"][name]
+            if g.isComposite():
+                if depth:
+                    _, _, body, _ = parse_composite_asm(s_asm.get(name, ""))
+                    if lines_have_code(body):
+                        issues.append(M("note_flat_own_nested", c=name))
+                for c in g.components:
+                    # components attached by points (ANCHOR) have no explicit offset
+                    cpos = None if pos is None or hasattr(c, "firstPt") else (pos[0] + c.x, pos[1] + c.y)
+                    walk(c.glyphName, offset, cpos, transformed or hasattr(c, "transform"), depth + 1)
+                    offset += si[c.glyphName].npoints
+                return
+            text = s_talk.get(name, "")
+            if not vtalk.has_code(text):
+                return
+            hinted = True
+            n = si[name].npoints
+            head = f"/* {name}: points {offset}-{offset + n - 1} */"
+            text = talk_header_re.sub("", text, count=1)
+            if transformed:
+                issues.append(M("note_flat_transform", c=name))
+                parts.append(head + sep + text)
+                return
+            refs, unsupported, _ = vtalk.analyze(text)
+            if unsupported:
+                issues.append(M("note_unsupported", cmds=", ".join(unsupported[:5])))
+                parts.append(head + sep + text)
+                return
+            total += len(refs)
+            mapping, gone = {}, []
+            ph = phantoms(name, *pos) if pos is not None else []
+            for p in refs:
+                k = p - n
+                if p < n:
+                    mapping[p] = p + offset
+                elif k < 2 and ph and ph[k] == root_ph[k]:
+                    mapping[p] = root_n + k   # the component's phantom sits on the glyph's own
+                elif k in (2, 3) and pos == (0, 0) and "vmtx" not in src:
+                    mapping[p] = root_n + k   # vertical phantoms come from the same font metrics
+                else:
+                    gone.append(dict(index=f"{name}:{p}", xy=None, reason=M("lost_phantom_comp", c=name, p=p)))
+            flat_refs.update(mapping.values())   # checked against the new outline either way
+            if gone:
+                lost.extend(gone)
+                parts.append(head + sep + text)
+            else:
+                parts.append(head + sep + vtalk.remap(text, mapping))
+
+        walk(sname, 0, (0, 0), False, 0)
+        if not hinted:
+            return None
+        talk_text = f"/* VTTTalk glyph {gid}, assembled from components */" + sep + sep.join(parts)
+        return talk_text, flat_refs, total, lost, issues
+
     def set_program(tname, prog):
         g = tgt["glyf"][tname]
         if prog is not None:
@@ -560,7 +640,36 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
         src_prog = sg.program if hasattr(sg, "program") else None
         r.geometry_changed = s.coords != info.coords
 
-        if s.kind != info.kind:
+        flat = component_talk(sname, gid) if s.kind == "composite" and info.kind == "simple" else None
+        if flat:
+            # composite decomposed into a simple glyph: remap the talk assembled from its components
+            flat_talk, refs, total, lost, reasons = flat
+            r.hinted_in_source = True
+            r.old_talk = flat_talk
+            r.notes.append(M("note_type", old=M(f"kind_{s.kind}"), new=M(f"kind_{info.kind}")))
+            r.notes.append(M("note_flat", comps=" + ".join(s.components)))
+            _, _, body, _ = parse_composite_asm(asm_src)
+            if lines_have_code(body):
+                r.notes.append(M("note_flat_own"))
+            mapping, lost_map = point_mapping(s, info, refs)
+            lost = lost + lost_map
+            if not remap:
+                reasons.append(M("note_no_remap"))
+            if lost:
+                reasons.append(M("note_lost", lost=len(lost), total=total))
+            r.notes.append(M("note_points", a=s.npoints, b=info.npoints, c=len(s.ends), d=len(info.ends)))
+            if reasons:
+                r.status = REHINT
+                r.lost_points = lost
+                r.notes += reasons
+            else:
+                r.status = REMAPPED
+                r.mapping = {k: v for k, v in mapping.items() if k != v}
+                n_talk[tname] = re.sub(r"(VTTTalk glyph )\d+", lambda m: f"{m.group(1)}{gid}",
+                                       vtalk.remap(flat_talk, mapping), count=1)
+            set_program(tname, None)
+
+        elif s.kind != info.kind:
             r.status = TYPE_CHANGED
             r.notes.append(M("note_type", old=M(f"kind_{s.kind}"), new=M(f"kind_{info.kind}")))
             if info.kind == "composite":

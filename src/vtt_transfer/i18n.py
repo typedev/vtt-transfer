@@ -167,12 +167,22 @@ MESSAGES: dict[str, tuple[str, str]] = {
     "note_comp_dropped_in": (
         "composite's own instructions removed: the point structure of its components changed ({names})",
         "собственные инструкции композита сняты: изменилась структура точек компонентов ({names})"),
+    "note_flat": ("composite decomposed: VTT Talk assembled from its components ({comps})",
+                  "композит разобран на контуры: VTT Talk собран из компонентов ({comps})"),
+    "note_flat_own": ("the composite's own instructions are lost and must be redone",
+                      "собственные инструкции композита потеряны, их нужно сделать заново"),
+    "note_flat_own_nested": ("own instructions of nested composite {c} are lost",
+                             "собственные инструкции вложенного композита {c} потеряны"),
+    "note_flat_transform": ("component {c} is scaled or flipped: its talk cannot be reused as is",
+                            "компонент {c} масштабирован или отражён: его talk нельзя использовать как есть"),
     "note_compile_error": ("compile error, hints removed: {msg}", "ошибка компиляции, хинты сняты: {msg}"),
 
     # ------------------------------------------------------------ lost points (core)
     "lost_range": ("point number out of range", "номер точки вне диапазона"),
     "lost_ambiguous": ("several points at {p}", "несколько точек с координатами {p}"),
     "lost_missing": ("point {p} is gone, nearest is {j} {q}", "точки {p} больше нет, ближайшая — {j} {q}"),
+    "lost_phantom_comp": ("phantom point {p} of component {c}: a flat glyph has no such point",
+                          "фантомная точка {p} компонента {c}: в плоском глифе такой точки нет"),
     "lost_collision": ("two points mapped to the same one", "две точки сопоставились с одной"),
 
     # ------------------------------------------------------------ character groups (core)
