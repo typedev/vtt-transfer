@@ -565,11 +565,9 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
                 else:
                     gone.append(dict(index=f"{name}:{p}", xy=None, reason=M("lost_phantom_comp", c=name, p=p)))
             flat_refs.update(mapping.values())   # checked against the new outline either way
-            if gone:
-                lost.extend(gone)
-                parts.append(head + sep + text)
-            else:
-                parts.append(head + sep + vtalk.remap(text, mapping))
+            lost.extend(gone)
+            # commands on a lost phantom are commented out, so no local number stays in the flat talk
+            parts.append(head + sep + vtalk.remap(text, mapping, unmapped=f"phantom of {name}"))
 
         walk(sname, 0, (0, 0), False, 0)
         if not hinted:

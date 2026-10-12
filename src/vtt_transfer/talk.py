@@ -108,8 +108,10 @@ def analyze(text: str) -> tuple[set[int], list[str], list[str]]:
     return refs, unsupported, commands
 
 
-def remap(text: str, mapping: dict[int, int]) -> str:
-    """Renumber point arguments according to mapping. Caller must ensure all refs are mapped."""
+def remap(text: str, mapping: dict[int, int], unmapped: str | None = None) -> str:
+    """Renumber point arguments according to mapping. Caller must ensure all refs are mapped,
+    unless `unmapped` is given: then a call referencing an unmapped point is commented out
+    as `/* <unmapped>: <call> */`, keeping its original numbers."""
 
     def fix_call(m: re.Match) -> str:
         cmd, raw = m.group(1), m.group(2)
@@ -117,6 +119,8 @@ def remap(text: str, mapping: dict[int, int]) -> str:
         pos = _point_positions(cmd, args)
         if not pos:
             return m.group(0)
+        if unmapped is not None and any(int(args[i]) not in mapping for i in pos):
+            return f"/* {unmapped}: {m.group(0)} */"
         for i in pos:
             old = int(args[i])
             args[i] = re.sub(r"\d+", str(mapping[old]), args[i], count=1)
