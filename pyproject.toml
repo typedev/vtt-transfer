@@ -7,6 +7,7 @@ dependencies = [
     "fonttools>=4.60",
     "vttcompilepy>=0.0.1.13",
     "brotli>=1.1",
+    "skia-pathops>=0.8",
 ]
 
 [project.scripts]

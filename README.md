@@ -65,6 +65,16 @@ If a VTThinter project lies next to the source (`family.hprj` for `family.VTT.tt
 - `TTFFileName`/`XMLFileName` are rewritten to the new font's name if it differs.
 - Only these values change; formatting and line endings (CRLF) are preserved.
 
+## Statics cut from a hinted VF (library)
+
+`vtt_transfer.static` cuts the named instances of a hinted variable font
+(`doc/static-instances-from-vf.md`): `named_instances(vf, family)` lists them, `cut(vf_path, instance,
+out_dir, remove_overlaps=True)` writes `<name>.overlap.VTT.ttf` (the instance with overlaps and VTT
+sources — the transfer source) and, with overlap removal, `<name>.ttf` (overlaps removed, hinting
+stripped — the transfer target). Transferring source → target carries the hints over by exact remap.
+`work/make_instances.py` runs it for every instance; hintbench uses it from its UI. Needs
+`skia-pathops`. A `vtt-static` CLI is planned.
+
 ## Release fonts: vtt-ship
 
 ```sh

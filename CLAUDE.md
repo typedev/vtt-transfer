@@ -8,7 +8,7 @@ A CLI that transfers VTT (Visual TrueType) hinting sources from a hinted version
 
 ## Commands
 
-Managed with `uv` (Python ≥3.11, hatchling build, deps: fonttools, vttcompilepy, brotli).
+Managed with `uv` (Python ≥3.11, hatchling build, deps: fonttools, vttcompilepy, brotli, skia-pathops).
 
 ```sh
 uv sync                                         # set up .venv
@@ -34,6 +34,9 @@ All code is in `src/vtt_transfer/`:
 - `i18n.py` — the message catalog (`MESSAGES`: key → (English, Russian)), `M(key, **params)` to create a `Msg`, `tr()` to render one. `str(msg)` is English (used for console output); the report renders in the chosen language via `Translator` (`t(...)` for plain text, `t.h(...)` for trusted-markup templates with escaped parameters).
 - `report.py` — `build(res, lang)` renders the self-contained HTML report (inline SVG glyph drawings via fontTools pens, old vs. new overlays).
 - `cli.py` — `vtt-transfer` entry point: argparse, calls `transfer`, `hprj.update`, `report.build`, prints a summary.
+- `static.py` — cutting statics out of a hinted VF: `named_instances`, `cut` (instancer with overlaps
+  kept → transfer source; `removeOverlaps` + hinting stripped → transfer target). Library only so far;
+  used by `work/make_instances.py` and by hintbench.
 - `ship.py` — `vtt-ship` entry point: compiles with vttcompilepy, strips TSI* tables, and `compare()`s against the designer's unhinted reference (`<name without .VTT>.ttf`); refuses to write on mismatch unless `--force`.
 
 ## Conventions
