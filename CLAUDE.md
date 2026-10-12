@@ -42,4 +42,5 @@ All code is in `src/vtt_transfer/`:
 - Any text that can reach the report goes through the `i18n.py` catalog with both translations; never put a literal sentence into `GlyphResult.notes`, `Check`, `res.actions`, `group_reason` or `report.py`. Raw data (glyph names, table tags, compiler output) is passed as a plain string or a parameter. Russian text lives only in `i18n.py`.
 - Section titles and intros in `report.py` come from the `sec_<id>` / `sec_<id>_intro` keys, derived from the section id.
 - Remapping deliberately requires exact coordinate matches — a point moved by one unit is treated as lost. Don't add fuzzy matching.
+- The target must be built with the same compiler as the hinted source (fontmake; fontc drops implied on-curve points and breaks round glyphs). When a transfer shows unexpected losses on unchanged designs, check the compiler first — `doc/compilers.md`.
 - Verification treats re-encoded tables as unchanged if `compile()` output matches; non-hinting tables (`gvar`, `GSUB`, `GPOS`…) must stay identical to the target font.

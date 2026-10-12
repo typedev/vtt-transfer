@@ -34,7 +34,8 @@ designspace → VF (unhinted) → vtt-transfer + VTT → hinted VF (.VTT.ttf)
 
 1. **Statics must be cut from the VF with instancer, not built separately with fontmake.** fontmake interpolates cubic UFO instances and runs cu2qu per instance, which produces different off-curve points than the VF. The hints are bound to point indices, so they would not fit.
 2. **Overlaps stay in.** instancer sets `OVERLAP_SIMPLE` / `OVERLAP_COMPOUND` by default (`overlap=KEEP_AND_SET_FLAGS`), and current macOS and Windows rasterizers handle overlapping contours.
-3. **Never use `instancer --remove-overlaps` on a hinted font.** It calls `removeOverlaps(varfont, ignoreErrors=…)` with the default `removeHinting=True` and strips the hinting from the whole font.
+3. **The VF itself must come from the same compiler as the hinted source** (fontmake, no `--drop-implied-oncurves`): fontc drops implied on-curve points and breaks hinted round glyphs before any instancing. See [compilers.md](compilers.md).
+4. **Never use `instancer --remove-overlaps` on a hinted font.** It calls `removeOverlaps(varfont, ignoreErrors=…)` with the default `removeHinting=True` and strips the hinting from the whole font.
 
 ### Minor effects
 
