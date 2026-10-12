@@ -146,3 +146,61 @@ def y_only(text: str) -> tuple[str, int]:
     for is_code, seg in _code_segments(text):
         out.append(CALL_RE.sub(drop, seg) if is_code else seg)
     return "".join(out), removed
+
+
+# ---------------------------------------------------------------- structured commands
+# Used by viewers (e.g. hintbench) to draw the hints; shares the argument typing above
+# with analyze/remap so a viewer and the transfer understand VTT Talk the same way.
+
+_AXIS_RE = re.compile(r"^(Res)?([XY])?([A-Z][A-Za-z]*)$")
+_KINDS = {
+    "Anchor": "anchor", "Link": "link", "Dist": "dist", "Shift": "shift",
+    "Interpolate": "interpolate", "IPAnchor": "ipanchor", "Align": "align",
+    "Delta": "delta", "NoRound": "round", "DownToGrid": "round", "UpToGrid": "round",
+    "HalfGrid": "round", "Smooth": "smooth",
+}
+_LINE_RE = re.compile(r"\r\n|\r|\n")
+
+
+def command_kind(cmd: str) -> tuple[str, str | None, bool]:
+    """(kind, axis 'x'/'y'/None, res) for a VTT Talk command name; kind 'other' if unknown."""
+    m = _AXIS_RE.match(cmd)
+    if not m:
+        return "other", None, False
+    res, axis, base = bool(m.group(1)), m.group(2), m.group(3)
+    return _KINDS.get(base, "other"), axis.lower() if axis else None, res
+
+
+def commands(text: str) -> list[dict]:
+    """Every call in the VTT Talk of a glyph, in order.
+
+    Each item: cmd, kind, axis, res, args (stripped), points (point numbers in argument
+    order; empty if the shape is not understood), cvt (Anchor/Link), deltas (Delta),
+    supported, line (1-based), start/end (offsets in text)."""
+    text = text or ""
+    starts = [0] + [m.end() for m in _LINE_RE.finditer(text)]
+    out = []
+    pos = 0
+    for is_code, seg in _code_segments(text):
+        if is_code:
+            for m in CALL_RE.finditer(seg):
+                cmd, raw = m.group(1), m.group(2)
+                args = raw.split(",")
+                ppos = _point_positions(cmd, args)
+                kind, axis, res = command_kind(cmd)
+                stripped = [a.strip() for a in args]
+                item = dict(cmd=cmd, kind=kind, axis=axis, res=res, args=[a for a in stripped if a],
+                            points=[int(stripped[i]) for i in ppos] if ppos else [],
+                            cvt=None, deltas=[], supported=ppos is not None)
+                if ppos is not None and cmd in ANCHOR and len(item["args"]) == 2:
+                    item["cvt"] = int(item["args"][1])
+                elif ppos is not None and cmd in LINK and len(stripped) >= 3 and INT_RE.match(stripped[2]):
+                    item["cvt"] = int(stripped[2])
+                elif ppos is not None and cmd in DELTA:
+                    item["deltas"] = item["args"][1:]
+                a = pos + m.start()
+                item["start"], item["end"] = a, pos + m.end()
+                item["line"] = sum(1 for s in starts if s <= a)
+                out.append(item)
+        pos += len(seg)
+    return out
