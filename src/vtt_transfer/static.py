@@ -51,6 +51,53 @@ def named_instances(vf: TTFont, family: str) -> list[Instance]:
     return out
 
 
+def restore_implied_oncurves(source: TTFont, target: TTFont) -> dict[str, int]:
+    """Put back on-curve points that overlap removal turned into implied ones.
+
+    skia-pathops merges two quadratic segments into one qCurveTo when their shared on-curve point is
+    exactly the midpoint of the neighbouring off-curves, so the target loses a point the hinted source
+    has (often an extremum, depending on how the instance rounds). For every glyph the removal rebuilt,
+    an on-curve point is inserted between two consecutive off-curves whose midpoint is an on-curve
+    point of the source glyph. The outline is unchanged; exact point remapping finds the point again.
+    Implied points the source did not have stay implied. `source` needs integer coordinates (a saved
+    font, not an instancer result still in memory). Returns {glyph: points inserted}."""
+    sg, tg = source["glyf"], target["glyf"]
+    out = {}
+    for name in target.getGlyphOrder():
+        g = tg[name]
+        if g.isComposite() or g.numberOfContours <= 0 or name not in sg:
+            continue
+        s_coords, s_ends, s_flags = sg[name].getCoordinates(sg)
+        coords, ends, flags = list(g.coordinates), list(g.endPtsOfContours), list(g.flags)
+        if s_ends == ends and list(s_coords) == coords:
+            continue   # not rebuilt
+        on = {tuple(c) for c, f in zip(s_coords, s_flags) if f & 1}
+        new_c, new_f, new_e = [], [], []
+        start = added = 0
+        for end in ends:
+            cc, ff = coords[start:end + 1], flags[start:end + 1]
+            n = len(cc)
+            for i in range(n):
+                new_c.append(cc[i])
+                new_f.append(ff[i])
+                j = (i + 1) % n
+                if n > 1 and not ff[i] & 1 and not ff[j] & 1:
+                    sx, sy = cc[i][0] + cc[j][0], cc[i][1] + cc[j][1]
+                    if sx % 2 == 0 and sy % 2 == 0 and (sx // 2, sy // 2) in on:
+                        new_c.append((sx // 2, sy // 2))
+                        new_f.append(1)
+                        added += 1
+            new_e.append(len(new_c) - 1)
+            start = end + 1
+        if added:
+            from fontTools.ttLib.tables._g_l_y_f import GlyphCoordinates
+            g.coordinates = GlyphCoordinates(new_c)
+            g.flags = bytearray(new_f)
+            g.endPtsOfContours = new_e
+            out[name] = added
+    return out
+
+
 def cut(vf_path: Path, instance: Instance, out_dir: Path, *, remove_overlaps: bool = True,
         vf: TTFont | None = None, log=lambda *a: None) -> Cut:
     """Write the instance's transfer source (and, with `remove_overlaps`, its target) into `out_dir`."""
@@ -84,6 +131,10 @@ def cut(vf_path: Path, instance: Instance, out_dir: Path, *, remove_overlaps: bo
     for g in glyf.glyphs.values():
         g.expand(glyf)
         g.removeHinting()
+    restored = restore_implied_oncurves(TTFont(source), tgt)   # saved: coordinates rounded as in the source
+    if restored:
+        log(f"{instance.name}: restored {sum(restored.values())} implied on-curve points "
+            f"in {len(restored)} glyphs")
     target = out_dir / f"{instance.name}.ttf"
     tgt.save(target)
     return Cut(instance, source, target)
