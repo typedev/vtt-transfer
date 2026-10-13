@@ -19,7 +19,7 @@ uv run vtt-ship path/font.VTT.ttf [--woff2]     # writes hinted/font.ttf without
 uv tool install -e .                            # global editable install of both commands
 ```
 
-There are no tests, linter, or formatter configured. Verify changes by running the CLI on real font pairs (e.g. an older hinted `*.VTT.ttf` against a new unhinted build of the same family) and inspecting the report and the exit code (`vtt-transfer`: 0 ok, 1 verification errors, 2 transfer impossible; `vtt-ship`: 1 if any font failed).
+There are no tests, linter, or formatter configured. Verify changes by running the CLI on real font pairs (an older hinted `*.VTT.ttf` against a new unhinted build of the same family) and inspecting the report and the exit code (`vtt-transfer`: 0 ok, 1 verification errors, 2 transfer impossible; `vtt-ship`: 1 if any font failed).
 
 ## Architecture
 
