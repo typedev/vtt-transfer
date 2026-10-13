@@ -56,6 +56,8 @@ STEMS = {
     87: ("LC Y round stroke", "o" "о", "x", (0.5,), 6),
     97: ("figure X straight stroke", "1", "y", X_SCAN, 4),
     99: ("figure X round stroke", "0", "y", "mid", 4),
+    # the bars of 2 (base), 4 (right of the stem) and 7 (top, past the diagonal); also the parent of 103
+    101: ("figure Y straight stroke", "247", "x", {"2": (0.8,), "4": (0.9,), "7": (0.6,)}, 4),
     103: ("figure Y round stroke", "0", "x", (0.5,), 4),
 }
 # parents: the first measured of these (lowercase first: most text is lowercase)
@@ -249,8 +251,8 @@ def measure(font: TTFont) -> dict[int, Measured]:
     for cvt, what, order in ((66, "X stroke parent", X_PARENT), (67, "Y stroke parent", Y_PARENT)):
         src = next((c for c in order if out[c].value), None)
         out[cvt] = Measured(cvt, what, out[src].value if src else None, parent=src)
-    vals = [out[c].value for c in (66, 67) if out[c].value]
-    out[65] = Measured(65, "grand parent", min(vals) if vals else None, parent=66 if vals and vals[0] == min(vals) else 67)
+    src = min((c for c in (66, 67) if out[c].value), key=lambda c: out[c].value, default=None)
+    out[65] = Measured(65, "grand parent", out[src].value if src else None, parent=src)
     return out
 
 
