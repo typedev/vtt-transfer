@@ -41,6 +41,10 @@ All code is in `src/vtt_transfer/`:
   (height CVTs from the Control Program), `apply`/`remove`/`detect` (FDEF pair in the fpgm source + one
   `ASM("CALL[] …")` before the first height CVT). Edits TSI1 only, compiles nothing. Library only;
   driven by hintbench. Background: `hintbench/docs/XHEIGHT-SCALING.md`.
+- `fresh.py` — VTT sources for an unhinted static from Microsoft's templates (`templates/`, MIT, see
+  `templates/NOTICE.md`; keep the files verbatim): `prepare(font)` → compiled font + report. `measure.py`
+  — heights and stems from the outlines, keyed by the template's CVT numbers. Library only; driven by
+  hintbench ("from scratch" projects).
 - `ship.py` — `vtt-ship` entry point: compiles with vttcompilepy, strips TSI* tables, and `compare()`s against the designer's unhinted reference (`<name without .VTT>.ttf`); refuses to write on mismatch unless `--force`.
 
 ## Conventions

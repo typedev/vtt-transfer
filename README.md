@@ -75,6 +75,23 @@ stripped — the transfer target). Transferring source → target carries the hi
 `work/make_instances.py` runs it for every instance; hintbench uses it from its UI. Needs
 `skia-pathops`. A `vtt-static` CLI is planned.
 
+## VTT sources from scratch (library)
+
+`vtt_transfer.fresh.prepare(font)` gives an unhinted static TrueType font VTT sources from Microsoft's
+templates (`src/vtt_transfer/templates/`, MIT, from microsoft/VisualTrueType — see `NOTICE.md`), as VTT's
+"Prepare Font" + "Control Program Only" would: glyf instructions and `fpgm`/`prep`/`cvt` dropped; the
+standard font program; the Control Program template with the values of `vtt_transfer.measure` written
+into its CVT lines (`2: 690 /* cap height */ /* measured: H E F … (17/17) */`, unmeasured slots marked);
+character groups (TSI5) from `chargrp.txt` by Unicode, unencoded glyphs by their base name, else by Unicode
+category; empty Talk, composites with `OFFSET[R]` assembly. The compiler generates the pre-program from
+the Control Program. Returns the compiled font and a report (measurements, group counts).
+
+`vtt_transfer.measure.measure(font)`: heights from the
+dominant cluster of reference glyph tops/bottoms (Latin + Cyrillic; overshoots relative to their
+height), stems from scanline ink runs, kept apart by group (UpperCase / LowerCase / Figure), direction
+and straight/round, keyed by the template's CVT numbers. Diagonals, serifs and italic CVTs are not
+measured. Used by hintbench's "from scratch" projects.
+
 ## Release fonts: vtt-ship
 
 ```sh

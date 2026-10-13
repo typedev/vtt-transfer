@@ -1,0 +1,508 @@
+﻿/*****
+
+Visual TrueType 6.1 Control Program 
+
+The new control program allows for a much easier setup of cvts and their
+hierarchy (inheritence) and exceptions (deltas) than the previous cvt and prep.
+It is intended to declare
+- cvt values
+- relations between dependant (child) and independent (parent) cvts
+- the ppem size below which child and parent cvts have the same values
+- relative or absolute inheritence
+- deltas for cvts in much the same way as deltas for control points in VTT Talk
+- additional (user-defined) character groups
+- spacing characters for user-defined character groups
+- additional (user-defined) cvt categories
+- global (font-wide) settings for
+  - the range of ppem sizes at which instructions are on
+  - the ppem size below which drop-out control is on
+  - values for cvt cut-ins
+- cvt attributes, last but not least, without using hexadecimal numbers...
+All these declarations are compiled to the actual prep upon compiling the cvt.
+*****/
+
+/*
+Additional Character group declarations
+
+To declare additional character groups, such as for greek characters, use the
+following example:
+
+GROUP GreekUC
+GROUP GreekLC
+GROUP GreekFig
+GROUP GreekPunct
+
+This will introduce four new character groups: GreekUC, GreekLC, GreekFig, and
+GreekPunct. These groups can then be used in the CharGrp.TXT template to
+associate each character with its character group. Subsequently, when you
+declare cvts, you can put the values for the Greek glyphs into the Greek group.
+Finally, when you use the link tool on a Greek glyph, the tool will choose the
+cvt from the Greek group.
+
+Likewise, if you need more character groups for the Latin glyphs, such as for
+small caps, superiors, or inferiors, feel free to add them. The limit is
+currently 256, 8 of which are reserved and comprise the standard character
+groups UpperCase, LowerCase, Figure, and Other.
+
+Along with user-defined character groups, you may wish to define a series of
+characters to check the spacing. The standard UpperCase group, for instance,
+uses "HH HOHO OO   " and replaces all the blanks by the current glyph in the
+main window displays this as the first part of the sample text at the top of
+the window. Very likely, for other groups you will need a different sequence
+of characters. Declare them as in the following example:
+
+GROUP LatinUC		"HH HOHO OO   "
+
+You can put any character between the double quotes on the right hand side.
+If it's not on your keyboard, use the following syntax:
+
+^574^ or ~414~
+
+to enter the character's glyph index (between carets) or unicode (between
+tildes), respectively.
+
+
+Additional Feature category declarations
+
+To declare additional feature categories, such as for flares, use the following
+example
+
+
+CATEGORY Flare
+
+This will introduce a new character group Flare, which you may then combine with
+all character groups, as shown further below.
+
+
+Global settings
+
+Following the user-defined character groups and feature categories are the
+global (font-wide) settings. The range of ppem sizes at which instructions
+are on is specified as follows:
+*/
+
+InstructionsOn @9..2047
+
+/*
+This compiles into appropriate code in the prep to turn off instructions below
+9 ppem and above 2047 ppem. Feel free to change these numbers as you see fit.
+
+The ppem size below which drop-out control is on is specified as follows:
+*/
+
+DropOutCtrlOff @144
+
+/*
+This compiles into approriate code in the prep to turn off drop-out control at
+and above 144 ppem. The special value of 255 ppem means to do drop-out control
+always. Users familiar with SCANCTRL and SCANTYPE may wish to control the bits
+individually, hence as an alternative they may use the following pair of
+assignments
+
+ScanCtrl = 511
+ScanType = 5
+
+which would achieve the same goal.
+
+The cvt cut-in values are specified as follows:
+*/
+
+CvtCutIn = 4, 2.5@29, 0@128
+
+/*
+This means that we want the cvt cut-in value to be
+- 4 pixels for small ppem sizes in order to force distances to the cvt
+- 2.5 pixels at medium ppem sizes (here starting at 29 ppem), and
+- 0 pixels at large ppem sizes (here starting at 128 ppem), to give full
+freedom to the actual widths.
+Again, this compiles into appropriate code in the prep. You may wish to
+experiment with the threshold ppem sizes and the pixel amounts, and you may
+add a fourth setting inbetween, such as
+
+CvtCutIn = 4, 2.5@29, 1@72, 0@128
+
+or use only two, such as
+
+CvtCutIn = 4, 0@128
+
+whichever serves best.*/
+
+ASM("WS[], 16, 0")
+
+/* 
+Syntax: ASM("WS[], 16, <accent threshold ppem>")
+Uses: S[16] to store threshold value
+Used by: FN 86, function to naturally space an accent above or below a base character.
+
+Provides for sharper rounding of accent positions (FN 86) at lower sizes as determined by the threshold 
+ppem.  A threshold value of zero means no threshold value is used. The threshold is an
+inclusive value for which ppem values less than and equal to the threshold will not use RES style rounding 
+of accent placment. Ppem values greater than the threshold will use RES style accent rounding.
+
+Example: ASM("WS[], 16, 50"), will only use "softer" RES rounding of accent placement ABOVE 50 ppem.
+*/
+
+ClearTypeCtrl = 1
+
+/*ClearTypeCtrl = 1. Enable native ClearType mode for all TrueType instructions, thus indicating a font 
+that is ClearType aware (and hence the rasterizer should not e.g. bypass delta instructions)
+If the parameter is set to zero, TrueType will not be in native mode. 
+If the parameter is greater than zero it will be in ClearType native mode. */
+ 
+LinearAdvanceWidths = 0
+
+/*LinearAdvanceWidths permits to override the default usage of USE_INTEGER_SCALING flag 
+in the flags field of the ‘head’ table. Acceptable values for n are 0 (default) 
+and 1 (don’t use integer scaling). Non-integer scaling yields advance widths that are 
+closer to the designed advance widths because it does not e.g. take 11 pt. at 96 dpi and 
+round the resulting 14 2/3 ppem up to 15 ppem. Internal to the rasterizer e.g. MPPEM 
+will still return an integer ppem size, but instructions keying off of this ppem size may 
+no longer produce the same results. For instance, at 11 pt, 96 dpi 
+(MPPEM rounds to 15 ppem from 14 2/3), the rasterization may get one pixel pattern, 
+while at 15 pt, 72 dpi (or true 15 ppem), the rasterization may get a different pixel pattern, 
+but since both ppem*/
+
+
+/*Finally, the actual cvt numbers start. Recall from the dialog box entitled
+"Edit cvt attributes..." that cvts have four different attributes
+- character group
+- link color
+- link direction
+- feature category
+Instead of combining these four into a cryptic hexadecimal number, we now
+spell them out in plain English. For example,
+
+UpperCase
+  Black
+  X
+  StraightStroke
+    68: 192
+
+introduces cvt number 68 with value 192 fUnits, with the combined attribute
+UpperCase Black X StraightStroke. Once you have specified e.g. StraightStroke,
+this part of the attribute remains in effect for all the following cvts, hence
+you may wish to organize your cvts accordingly, as we did below. Same holds
+true for the X, hence keep the X, but change the feature category to RoundStroke
+and you get all UpperCase Black X RoundStroke cvts, etc. Indentation is optional
+but may increase legibility; feel free to use as many blanks or tabs you like.
+
+Lets start with the heights:
+*/
+
+UpperCase
+  Grey
+  Y
+  SquareHeight
+     2:     0           /* replace the 0 with the measured cap height */
+
+ /* The following function, 89, rounds <cvt> depending on rendering 
+environment and projection vector CALL[], <cvt>, 89*/
+
+ASM("SVTCA[Y]") 
+ASM("CALL[], 2, 89")
+
+     8:     0           /* the baseline "height" remains 0 */
+ASM("SVTCA[Y]")
+ASM("CALL[], 8, 89")
+
+  RoundHeight
+     3:     0 ~  2 @50  /* replace the 0 with the measured cap height overshoot */
+     9:    -0 ~  8 @50  /* replace the 0 with the cap base height undershoot */
+
+/*
+The ~2 @42 means the following:
+- The 2 designates the parent cvt, which is the cap height in this case.
+- The tilde designates a relative cvt value, which is the overshoot amount in
+  this case. This amount will be used on top of the cap height.
+- The 42 means that the overshoot should kick in at 42 ppem. Replace the 42 by
+  whichever ppem size you wish the overshoot to kick in. 
+*/
+
+LowerCase
+  SquareHeight
+     0:     0 /* replace the 0 with the measured square ascender height */
+ASM("SVTCA[Y]")
+ASM("CALL[], 0, 89")
+
+     6:     0 /* replace the 0 with the measured square x-height */
+ASM("SVTCA[Y]")
+ASM("CALL[], 6, 89")
+
+/*The following sample delta, increases the lowercase x-height @22ppem*/
+/*Delta (1 @22) */
+
+    10:     0 /* replace the 0 with the measured lc_base height */
+
+ASM("SVTCA[Y]")
+ASM("CALL[], 10, 89")
+
+    14:    -0 /* replace the 0 with the measured square descender height */
+
+ASM("SVTCA[Y]")
+ASM("CALL[], 14, 89")
+
+  RoundHeight
+     1:     0 ~  0 @50 /* replace the 0 with the measured round ascender height overshoot */
+     7:     0 ~  6 @50 /* replace the 0 with the measured round x-height overshoot */
+    11:    -0 ~ 10 @50 /* replace the 0 with the measured lc_base round height undershoot */
+    15:    -0 ~ 14 @50 /* replace the 0 with the measured descender round height undershoot */
+
+  Figure
+  SquareHeight
+     4:     0 /* replace the 0 with the measured square figure height */
+
+ASM("SVTCA[Y]")
+ASM("CALL[], 4, 89")
+
+    12:     0 /* replace the 0 with the measured figure base height */
+
+ASM("SVTCA[Y]")
+ASM("CALL[], 12, 89")
+
+  RoundHeight
+     5:     0 ~  4 @50  /* replace the 0 with the measured round figure height overshoot */
+    13:     -0 ~  12 @50  /* replace the 0 with the measured round figure height undershoot */
+
+  Other
+  SquareHeight
+    16:     0
+ASM("SVTCA[Y]")
+ASM("CALL[], 16, 89")
+
+    18:     0
+ASM("SVTCA[Y]")
+ASM("CALL[], 18, 89")
+
+  RoundHeight
+    17:     0
+    19:     0
+
+/*
+Now we do the weights. We start with the grand parent cvt. Since the attributes
+remain in effect for all the following cvts, and since the grand parent cvt does
+not belong to a particular group etc., we reset the attributes as follows:
+*/
+
+AnyGroup
+  AnyColor
+  AnyDirection
+  AnyCategory
+    65: 0 /* replace the 0 with the actual weight of the grand parent cvt */
+
+  X
+    66: 0 = 65 @17 /* replace the 0 with weight of parent x distances */
+  Y
+    67: 0 = 65 @17 /* replace the 0 with weight of parent y distances */
+
+/*
+The = 65 @17 means the following:
+- The 65 designates the parent cvt, which is the grand parent in this case.
+- The equals sign designates an absolute cvt value. Unlike relative cvts, put
+  the actual (absolute) amount here, not merely the extra (relative) amount,
+  as it will not be added to the parent.
+- The 17 means that the cvt may break lose from its parent at 17 ppem. Replace
+  the 17 by whichever ppem size you wish this to happen. 17 ppem is merely the
+  size at which a typical font will make the transition from 1-pixel-wide to
+  2-pixel-wide stems.
+
+Each cvt declaration can have a list of deltas. Using the above example:
+
+    67: 150 /*= 65 @17 Delta (1 @17, -1 @31..36)*/
+
+The Delta (1 @17, -1 @31..36) is optional and means the following:
+- at 17 ppem we want to add 1 pixel to the weight of this distance
+- at 31 ppem through (and including) 36 ppem we want to subtract 1 pixel
+You can have more sizes, if you wish.
+
+Now we start with the UpperCase characters
+*/
+
+UpperCase
+  Grey
+  X
+  ItalicRun
+    20: 0
+  Y
+  ItalicRise
+    21: 0
+
+/*
+For italic fonts, we have to specify the components of the italic angle.
+These are
+- the italic run (how much across), and
+- the italic rise (how much up).
+You will have an italic rise for each character group, and you may have several
+italic runs for each character group, to account for varying italic angles such
+as in fonts like Garamond. For roman fonts, we don't need these cvts.
+
+Next, we do the various strokes.
+*/
+
+UpperCase
+  Black
+  X
+  StraightStroke
+    68: 0 = 66 @27
+    69: 0
+  RoundStroke
+    70: 0 = 68 @100
+/*
+    You can use relative inheritance for round strokes. For example,
+    instead of the absolute distance you could use the difference
+    between round and straight strokes, as was done for heights:
+    
+    70: 5 ~ 68 @100
+
+    The 5 means the round stroke is 5 fUnits wider than the straight
+    stroke (that is, cvt 68).
+*/
+    71: 0
+  Y
+  StraightStroke
+    72: 0 = 67 @ 41
+    73: 0
+  RoundStroke
+    74: 0 = 72 @100
+    75: 0
+  Diag
+  StraightStroke
+    76: 0 = 68 @ 41
+    77: 0
+  White
+  X
+  SerifExt
+    78: 0
+    79: 0
+  Black
+  Y
+  SerifHeight
+    80: 0
+
+/*
+Of course, SerifExt and SerifHeight are needed only for fonts that actually have
+serifs. You can remove them for all other fonts.
+
+We repeat the same pattern for the LowerCase characters. Again, ItalicRun and
+ItalicItalic Rise are needed only for italic fonts
+*/
+
+LowerCase
+  Grey
+  X
+  ItalicRun
+    22: 0
+  Y
+  ItalicRise
+    23: 0
+  Black
+  X
+  StraightStroke
+    81: 0 = 66 @ 27
+    82: 0
+  RoundStroke
+    83: 0 = 81 @100
+    84: 0
+  Y
+  StraightStroke
+    85: 0 = 67 @ 41
+    86: 0
+  RoundStroke
+    87: 0 = 85 @ 100
+    88: 0
+  Diag
+  StraightStroke
+    89: 0 = 81 @ 41
+    90: 0
+  White
+  X
+  SerifExt
+    91: 0
+    92: 0
+  Black
+  Y
+  SerifHeight
+    93: 0
+  X
+  Distance
+    94: 0
+  Y
+    95: 0
+  White
+    96: 0
+
+/*
+Same pattern for the Figures...
+*/
+
+Figure
+  Grey
+  X
+  ItalicRun
+    24: 0
+  Y
+  ItalicRise
+    25: 0
+  Black
+  X
+  StraightStroke
+    97: 0 = 66 @ 27
+    98: 0
+  RoundStroke
+    99: 0 = 97 @ 100
+    100: 0
+  Y
+  StraightStroke
+    101: 0 = 67 @ 41
+    102: 0
+  RoundStroke
+    103: 0 = 101 @ 100
+    104: 0
+  Diag
+  StraightStroke
+    105: 0 = 97 @ 41
+    106: 0
+  White
+  X
+  SerifExt
+    107: 0
+    108: 0
+  Black
+  Y
+  SerifHeight
+    109: 0
+
+/*
+...and all the other glyphs.
+*/
+Other
+  X
+  StraightStroke
+    110: 0 = 66 @ 27
+    111: 0
+  RoundStroke
+    112: 0 = 110 @ 100
+    113: 0
+  Y
+  StraightStroke
+    114: 0 = 67 @ 41
+    115: 0
+  RoundStroke
+    116: 0 = 114 @ 100
+    117: 0
+  Diag
+  StraightStroke
+    118: 0 = 110 @ 41
+    119: 0
+
+/*
+Here, you would add your own groups and individual cvts, as they are needed to
+control a feature that several glyphs have in common.
+
+Notice: To find out which is the next cvt number you can use, consult the
+title bar of the control program. It indicates the number of entries in the cvt.
+Since we start counting at 0, this is the same as giving you the next available
+number.
+
+CAUTION: Do not use cvt numbers in range 40 through 64. This range is used by
+VTT internally.
+*/

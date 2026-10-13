@@ -34,12 +34,14 @@ COLORS = {"Grey", "Black", "White"}
 DIRECTIONS = {"X", "Y"}
 HEIGHT_FEATURES = ("SquareHeight", "RoundHeight")
 
-_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
-_CVT_RE = re.compile(r"^(\d+)\s*:\s*(-?\d+)(?:\s*~\s*(\d+)\s*@\s*(\d+))?\s*(.*)$")
+# `7: 8 ~ 6 @61` (relative to a parent) or `68: 140 = 66 @27` (absolute, inherits until 27 ppem)
+_CVT_RE = re.compile(r"^(\d+)\s*:\s*(-?\d+)(?:\s*([~=])\s*(\d+)\s*@\s*(\d+))?\s*(.*)$")
 _FDEF_RE = re.compile(r"FDEF\[\s*\]\s*,\s*(\d+)")
 _ASM_RE = re.compile(r'^\s*ASM\(\s*"([^"]*)"\s*\)\s*$')
 _CALL_ARGS_RE = re.compile(r"^CALL\[\s*\]\s*,\s*([-\d,\s]+)$")
-_STD_ASM_RE = re.compile(r"^(SVTCA\[\s*[XY]\s*\]|CALL\[\s*\]\s*,\s*\d+\s*,\s*89)$")
+# ASM lines of Microsoft's template that do not touch CVT values: projection vector, fn 89 (round a
+# CVT for the rendering environment), WS 16 (the ppem above which accents are placed with RES rounding)
+_STD_ASM_RE = re.compile(r"^(SVTCA\[\s*[XY]\s*\]|CALL\[\s*\]\s*,\s*\d+\s*,\s*89|WS\[\s*\]\s*,\s*16\s*,\s*\d+)$")
 
 
 class XScaleError(Exception):
@@ -75,15 +77,32 @@ def _lines(text: str) -> list[str]:
     return re.split(r"\r\n|\r|\n", text)
 
 
-def _blank_comments(text: str) -> str:
-    """Comments replaced by spaces, line breaks kept, so line numbers stay valid."""
-    return _COMMENT_RE.sub(lambda m: re.sub(r"[^\r\n]", " ", m.group(0)), text)
+def blank_comments(text: str) -> str:
+    """Comments replaced by spaces, line breaks kept, so line numbers and columns stay valid. VTT's
+    comments nest (Microsoft's Control Program template has `/* … */` examples inside comments)."""
+    out, depth, i, n = [], 0, 0, len(text)
+    while i < n:
+        two = text[i:i + 2]
+        if two == "/*":
+            depth += 1
+            out.append("  ")
+            i += 2
+        elif two == "*/" and depth:
+            depth -= 1
+            out.append("  ")
+            i += 2
+        else:
+            c = text[i]
+            out.append(c if not depth or c in "\r\n" else " ")
+            i += 1
+    return "".join(out)
+
 
 
 def _parse_cvt(src: str) -> dict:
     """Height CVTs of a VTT Control Program, with the line numbers needed to edit it."""
     declared = set(DEFAULT_GROUPS)
-    code = _lines(_blank_comments(src))
+    code = _lines(blank_comments(src))
     for s in code:
         m = re.match(r"\s*GROUP\s+(\S+)", s)
         if m:
@@ -106,12 +125,13 @@ def _parse_cvt(src: str) -> dict:
             continue
         m = _CVT_RE.match(s)
         if m:
+            rel = m.group(3) == "~"
             cvts.append(dict(idx=int(m.group(1)), value=int(m.group(2)),
-                             parent=int(m.group(3)) if m.group(3) else None,
-                             ppem=int(m.group(4)) if m.group(4) else None,
+                             parent=int(m.group(4)) if rel else None,
+                             ppem=int(m.group(5)) if rel else None,
                              group=group, feature=feature, line=i,
                              group_line=i if group_line is None else group_line))
-            if m.group(5).strip():
+            if m.group(6).strip():
                 odd.append((i, s))
             continue
         if "=" in s or "@" in s or s.startswith(("GROUP", "CATEGORY")):
@@ -183,7 +203,7 @@ def find_heights(font) -> dict:
         if _STD_ASM_RE.match(text) or (marked and _parse_call(text)):
             continue
         warnings.append(f"Control Program line {line + 1}: ASM(\"{text[:60]}\") runs after the scaling")
-    if re.search(r"\bDELTAC\d|\bDelta\b", _blank_comments(src)):
+    if re.search(r"\bDELTAC\d|\bDelta\b", blank_comments(src)):
         warnings.append("the Control Program has CVT deltas; they run after the scaling, "
                         "tuned for unscaled values")
     return out
@@ -194,7 +214,7 @@ def find_heights(font) -> dict:
 def free_fdef(font) -> int:
     """First function number n such that n and n+1 are above every FDEF in the fpgm source
     (gaps below are left alone: VTT and VTThinter reserve ranges)."""
-    nums = [int(x) for x in _FDEF_RE.findall(_blank_comments(_sources(font).get("fpgm", "")))]
+    nums = [int(x) for x in _FDEF_RE.findall(blank_comments(_sources(font).get("fpgm", "")))]
     return max(nums) + 1 if nums else 0
 
 
