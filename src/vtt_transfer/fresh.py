@@ -23,9 +23,9 @@ from pathlib import Path
 import vttcompilepy as vtt
 from fontTools.ttLib import TTFont, newTable
 
+from . import control
 from . import measure as measure_mod
 from .core import render_component
-from .xscale import blank_comments
 
 TEMPLATES = Path(__file__).parent / "templates"
 SOURCE_TABLES = ("TSI0", "TSI1", "TSI2", "TSI3", "TSI5", "TSIC", "TSIB", "TSID", "TSIJ", "TSIP", "TSIS", "TSIV")
@@ -87,34 +87,25 @@ def assign_groups(font: TTFont) -> dict[str, int]:
     return {name: GROUPS[of_name(name)] for name in font.getGlyphOrder()}
 
 
-_CVT_LINE_RE = re.compile(r"^(\s*)(\d+)(\s*:\s*)(-?\d+)([^/]*?)(\s*/\*.*\*/)?\s*$")
-
-
 def control_program(measured: dict[int, measure_mod.Measured]) -> str:
-    """The Control Program template with the measured values in its CVT lines: `2: 690 /* cap height */
-    /* measured: H E F … (17/17) */`. Lines inside comments (the template's examples) are left alone;
+    """The Control Program template with the measured values in its CVTs: `2: 690 /* cap height */
+    /* measured: H E F … (17/17) */`. CVTs inside comments (the template's examples) are not CVTs;
     slots `measure` knows of but could not measure get 0 and a "not measured" comment."""
     src = template("cvttmpl.txt")
-    code = blank_comments(src)
-    raw, blanked = src.split("\r"), code.split("\r")
-    out = []
-    for line, bare in zip(raw, blanked):
-        m = _CVT_LINE_RE.match(line)
-        if m and bare.strip().startswith(m.group(2)):
-            ind, num, colon, _, rest, _ = m.groups()
-            meas = measured.get(int(num))
-            if meas is not None:
-                value = meas.value if meas.value is not None else 0
-                if meas.value is None:
-                    note = "not measured"
-                elif meas.glyphs:
-                    note = f"measured: {' '.join(meas.glyphs[:8])}{' …' if len(meas.glyphs) > 8 else ''} ({meas.samples}/{meas.total})"
-                else:
-                    note = f"= cvt {meas.parent}" if meas.parent is not None else ""
-                # the first comment is the CVT's name (viewers show it as the label), the second the evidence
-                line = f"{ind}{num}{colon}{value}{rest.rstrip()} /* {meas.what} */" + (f" /* {note} */" if note else "")
-        out.append(line)
-    return "\r".join(out)
+    defined = control.parse(src).cvts
+    for num, meas in measured.items():
+        if num not in defined:
+            continue
+        if meas.value is None:
+            note = "not measured"
+        elif meas.glyphs:
+            note = f"measured: {' '.join(meas.glyphs[:8])}{' …' if len(meas.glyphs) > 8 else ''} ({meas.samples}/{meas.total})"
+        else:
+            note = f"= cvt {meas.parent}" if meas.parent is not None else ""
+        # the first comment is the CVT's name (viewers show it as the label), the second the evidence
+        src = control.set_cvt(src, num, value=meas.value if meas.value is not None else 0,
+                              name=meas.what, note=note)
+    return src
 
 
 def composite_asm(font: TTFont, name: str, gids: dict[str, int]) -> str:

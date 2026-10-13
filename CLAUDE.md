@@ -41,6 +41,11 @@ All code is in `src/vtt_transfer/`:
   (height CVTs from the Control Program), `apply`/`remove`/`detect` (FDEF pair in the fpgm source + one
   `ASM("CALL[] …")` before the first height CVT). Edits TSI1 only, compiles nothing. Library only;
   driven by hintbench. Background: `hintbench/docs/XHEIGHT-SCALING.md`.
+- `control.py` — VTT Control Program parser and editor (port of VisualTrueType `src/CvtManager.cpp`;
+  token based: sticky attributes, nested comments). `parse` → `Program` (declarations, settings, asm,
+  cvts, errors; never raises), `set_cvt` / `set_setting` edit the text, keeping its formatting.
+  `blank_comments` lives here. xscale and fresh use it; hintbench builds its Control Program editor
+  on it.
 - `fresh.py` — VTT sources for an unhinted static from Microsoft's templates (`templates/`, MIT, see
   `templates/NOTICE.md`; keep the files verbatim): `prepare(font)` → compiled font + report. `measure.py`
   — heights and stems from the outlines, keyed by the template's CVT numbers. Library only; driven by

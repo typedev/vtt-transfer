@@ -24,20 +24,17 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from . import control
+from .control import blank_comments  # hintbench imports it from here too
+
 VERSION = 1
 MARK_BEGIN = f"/* >>> vtt-transfer xscale v{VERSION}: ttfautohint-style x-height scaling */"
 MARK_END = "/* <<< vtt-transfer xscale */"
 CALL_COMMENT = "/* vtt-transfer xscale: scale height CVTs to the rounded x-height (fpgm fn {n}) */"
 
-DEFAULT_GROUPS = ("UpperCase", "LowerCase", "Figure", "Other")
-COLORS = {"Grey", "Black", "White"}
-DIRECTIONS = {"X", "Y"}
 HEIGHT_FEATURES = ("SquareHeight", "RoundHeight")
 
-# `7: 8 ~ 6 @61` (relative to a parent) or `68: 140 = 66 @27` (absolute, inherits until 27 ppem)
-_CVT_RE = re.compile(r"^(\d+)\s*:\s*(-?\d+)(?:\s*([~=])\s*(\d+)\s*@\s*(\d+))?\s*(.*)$")
 _FDEF_RE = re.compile(r"FDEF\[\s*\]\s*,\s*(\d+)")
-_ASM_RE = re.compile(r'^\s*ASM\(\s*"([^"]*)"\s*\)\s*$')
 _CALL_ARGS_RE = re.compile(r"^CALL\[\s*\]\s*,\s*([-\d,\s]+)$")
 # ASM lines of Microsoft's template that do not touch CVT values: projection vector, fn 89 (round a
 # CVT for the rendering environment), WS 16 (the ppem above which accents are placed with RES rounding)
@@ -77,71 +74,24 @@ def _lines(text: str) -> list[str]:
     return re.split(r"\r\n|\r|\n", text)
 
 
-def blank_comments(text: str) -> str:
-    """Comments replaced by spaces, line breaks kept, so line numbers and columns stay valid. VTT's
-    comments nest (Microsoft's Control Program template has `/* … */` examples inside comments)."""
-    out, depth, i, n = [], 0, 0, len(text)
-    while i < n:
-        two = text[i:i + 2]
-        if two == "/*":
-            depth += 1
-            out.append("  ")
-            i += 2
-        elif two == "*/" and depth:
-            depth -= 1
-            out.append("  ")
-            i += 2
-        else:
-            c = text[i]
-            out.append(c if not depth or c in "\r\n" else " ")
-            i += 1
-    return "".join(out)
-
-
 
 def _parse_cvt(src: str) -> dict:
-    """Height CVTs of a VTT Control Program, with the line numbers needed to edit it."""
-    declared = set(DEFAULT_GROUPS)
-    code = _lines(blank_comments(src))
-    for s in code:
-        m = re.match(r"\s*GROUP\s+(\S+)", s)
-        if m:
-            declared.add(m.group(1))
+    """Height-scaling view of the Control Program: CVTs in source order with the line numbers
+    needed to edit it, ASM statements, parse errors."""
+    prog, spans = control._parse(src)
     raw = _lines(src)
     comment = CALL_COMMENT.split("(")[0]
-    group = feature = None
-    group_line = None
-    cvts = []       # dicts: idx, value, parent, ppem, group, feature, line, group_line
-    asm = []        # (line, instruction text, follows our call comment) of every ASM() line
-    odd = []        # (line, text) of unparsed text after a CVT declaration
-    for i, s in enumerate(code):
-        s = s.strip()
-        if not s:
-            continue
-        m = _ASM_RE.match(s)
-        if m or s.startswith("ASM("):
-            prev = next((r.strip() for r in reversed(raw[:i]) if r.strip()), "")
-            asm.append((i, m.group(1).strip() if m else s, prev.startswith(comment)))
-            continue
-        m = _CVT_RE.match(s)
-        if m:
-            rel = m.group(3) == "~"
-            cvts.append(dict(idx=int(m.group(1)), value=int(m.group(2)),
-                             parent=int(m.group(4)) if rel else None,
-                             ppem=int(m.group(5)) if rel else None,
-                             group=group, feature=feature, line=i,
-                             group_line=i if group_line is None else group_line))
-            if m.group(6).strip():
-                odd.append((i, s))
-            continue
-        if "=" in s or "@" in s or s.startswith(("GROUP", "CATEGORY")):
-            continue  # settings (InstructionsOn @…, CvtCutIn = …) and declarations
-        for w in s.split():
-            if w in declared:
-                group, feature, group_line = w, None, i
-            elif w not in COLORS and w not in DIRECTIONS:
-                feature = w   # SquareHeight, RoundHeight, stroke features, …
-    return dict(cvts=cvts, asm=asm, odd=odd)
+    cvts = [dict(idx=n, value=c["value"],
+                 parent=c["parent"] if c["op"] == "~" else None,
+                 ppem=c["ppem"] if c["op"] == "~" else None,
+                 group=c["group"], feature=c["category"], line=c["line"],
+                 group_line=spans["cvts"][n]["group_line"])
+            for n, c in sorted(prog.cvts.items(), key=lambda kv: kv[1]["line"])]
+    asm = []        # (line, instruction text, follows our call comment) of every ASM() statement
+    for a in prog.asm:
+        prev = next((r.strip() for r in reversed(raw[:a["line"]]) if r.strip()), "")
+        asm.append((a["line"], a["code"].strip(), prev.startswith(comment)))
+    return dict(cvts=cvts, asm=asm, errors=prog.errors)
 
 
 def find_heights(font) -> dict:
@@ -196,9 +146,8 @@ def find_heights(font) -> dict:
                     warnings.append(f"several overshoots linked to x-height CVT {out['xh']} "
                                     f"({', '.join(str(c['idx']) for c in over)}): using {out['xo']}")
 
-    for line, text in p["odd"]:
-        warnings.append(f"Control Program line {line + 1}: unparsed text after a CVT ({text[:60]}) — "
-                        "CVT deltas run after the scaling, tuned for unscaled values")
+    for e in p["errors"]:
+        warnings.append(f"Control Program line {e['line'] + 1}: {e['message']}")
     for line, text, marked in p["asm"]:
         if _STD_ASM_RE.match(text) or (marked and _parse_call(text)):
             continue

@@ -92,6 +92,17 @@ height), stems from scanline ink runs, kept apart by group (UpperCase / LowerCas
 and straight/round, keyed by the template's CVT numbers. Diagonals, serifs and italic CVTs are not
 measured. Used by hintbench's "from scratch" projects.
 
+## Control Program (library)
+
+`vtt_transfer.control` parses and edits the VTT Control Program (TSI1 `cvt` source). It is a port of
+the compiler's grammar (VisualTrueType `CvtManager.cpp`). Parsing is token based: attributes stay set
+until changed, comments nest, and indentation means nothing. `parse(text)` returns a `Program` with
+the GROUP/CATEGORY declarations (TSI5 group numbers), the settings, the `ASM` statements, every CVT
+(value, `~`/`=` inheritance, break ppem, deltas, attributes, the first two comments of its line,
+absolute value) and the errors with their lines. It never raises. `set_cvt(text, n, value=…, ppem=…,
+deltas=…, name=…, note=…)` and `set_setting(text, key, value)` change only the edited tokens and keep
+comments, spacing and line ends. xscale and fresh are built on it.
+
 ## Release fonts: vtt-ship
 
 ```sh
