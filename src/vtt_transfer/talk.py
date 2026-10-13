@@ -175,12 +175,31 @@ def command_kind(cmd: str) -> tuple[str, str | None, bool]:
     return _KINDS.get(base, "other"), axis.lower() if axis else None, res
 
 
+def _arg_spans(cmd: str, args: list[str], ppos: list[int] | None, has_cvt: bool, at: int) -> list[dict]:
+    """Offsets of the typed arguments of one call; `at` is the offset of its first argument."""
+    if ppos is None:
+        return []
+    out = []
+    for i, arg in enumerate(args):
+        body = arg.strip()
+        if body:
+            role = ("point" if i in ppos else
+                    "cvt" if has_cvt and ((cmd in ANCHOR and i == 1) or (cmd in LINK and i == 2)) else
+                    "delta" if cmd in DELTA and i >= 1 else None)
+            if role:
+                start = at + len(arg) - len(arg.lstrip())
+                out.append(dict(start=start, end=start + len(body), role=role))
+        at += len(arg) + 1
+    return out
+
+
 def commands(text: str) -> list[dict]:
     """Every call in the VTT Talk of a glyph, in order.
 
     Each item: cmd, kind, axis, res, args (stripped), points (point numbers in argument
     order; empty if the shape is not understood), cvt (Anchor/Link), deltas (Delta),
-    supported, line (1-based), start/end (offsets in text)."""
+    supported, line (1-based), start/end (offsets in text), spans (offsets in text of the
+    arguments that are points, a cvt or deltas: {start, end, role})."""
     text = text or ""
     starts = [0] + [m.end() for m in _LINE_RE.finditer(text)]
     out = []
@@ -204,6 +223,7 @@ def commands(text: str) -> list[dict]:
                     item["deltas"] = item["args"][1:]
                 a = pos + m.start()
                 item["start"], item["end"] = a, pos + m.end()
+                item["spans"] = _arg_spans(cmd, args, ppos, item["cvt"] is not None, pos + m.start(2))
                 item["line"] = sum(1 for s in starts if s <= a)
                 out.append(item)
         pos += len(seg)
