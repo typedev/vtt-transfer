@@ -21,6 +21,7 @@ POINT_LIST = {
     "YNoRound", "XNoRound",
     "YDownToGrid", "XDownToGrid", "YUpToGrid", "XUpToGrid",
     "YHalfGrid", "XHalfGrid",
+    "YDoubleGrid", "XDoubleGrid",
 }
 # (point [, cvt])
 ANCHOR = {"YAnchor", "XAnchor", "ResYAnchor", "ResXAnchor"}
@@ -161,7 +162,7 @@ _KINDS = {
     "Anchor": "anchor", "Link": "link", "Dist": "dist", "Shift": "shift",
     "Interpolate": "interpolate", "IPAnchor": "ipanchor", "Align": "align",
     "Delta": "delta", "NoRound": "round", "DownToGrid": "round", "UpToGrid": "round",
-    "HalfGrid": "round", "Smooth": "smooth",
+    "HalfGrid": "round", "DoubleGrid": "round", "Smooth": "smooth",
 }
 _LINE_RE = re.compile(r"\r\n|\r|\n")
 
