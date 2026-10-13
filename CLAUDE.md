@@ -37,6 +37,10 @@ All code is in `src/vtt_transfer/`:
 - `static.py` — cutting statics out of a hinted VF: `named_instances`, `cut` (instancer with overlaps
   kept → transfer source; `removeOverlaps` + hinting stripped → transfer target). Library only so far;
   used by `work/make_instances.py` and by hintbench.
+- `xscale.py` — ttfautohint-style x-height scaling written into the VTT sources: `find_heights`
+  (height CVTs from the Control Program), `apply`/`remove`/`detect` (FDEF pair in the fpgm source + one
+  `ASM("CALL[] …")` before the first height CVT). Edits TSI1 only, compiles nothing. Library only;
+  driven by hintbench. Background: `hintbench/docs/XHEIGHT-SCALING.md`.
 - `ship.py` — `vtt-ship` entry point: compiles with vttcompilepy, strips TSI* tables, and `compare()`s against the designer's unhinted reference (`<name without .VTT>.ttf`); refuses to write on mismatch unless `--force`.
 
 ## Conventions
