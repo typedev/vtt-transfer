@@ -491,6 +491,7 @@ class _Parser:
         value, value_span = v // ONE, (vs, self.prev_end())
         if self.tok.kind == "num" and self.tok.hex:     # old format: hexadecimal attributes
             self.next()
+        end = self.prev_end()       # of the declaration proper, without the ASM statements after it
         self.inline()
         op = parent = ppem = None
         inh_span = ppem_span = None
@@ -502,7 +503,7 @@ class _Parser:
             if parent not in self.prog.cvts:
                 self.error(ps, "parent cvt not defined (must be defined before its children)")
             ppem, s, e = self.at_ppem("break ppem size")
-            inh_span, ppem_span = (o.start, e), (s, e)
+            inh_span, ppem_span, end = (o.start, e), (s, e), e
             self.inline()
         deltas, delta_span, kinds = [], None, set()
         while self.tok.kind == "kw" and self.tok.text in DELTAS:
@@ -530,6 +531,7 @@ class _Parser:
                 self.next()
             self.expect(")", "')'")
             delta_span = (delta_span[0] if delta_span else kw.start, self.prev_end())
+            end = self.prev_end()
             self.inline()
         if n in self.prog.cvts:
             self.error(t.start, f"cvt {n} already defined")
@@ -539,7 +541,7 @@ class _Parser:
                                  direction=self.ctx["direction"], category=self.ctx["category"],
                                  name=None, note=None, line=self.line(t.start), absolute=value)
         self.spans["cvts"][n] = dict(num=num_span, value=value_span, inherit=inh_span, ppem=ppem_span,
-                                     deltas=delta_span, end=self.prev_end(), next=self.tok.start,
+                                     deltas=delta_span, end=end, next=self.tok.start,
                                      group_line=self.line(self.group_tok) if self.group_tok is not None
                                      else self.line(t.start))
 

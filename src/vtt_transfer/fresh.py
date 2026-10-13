@@ -3,7 +3,7 @@
 
 - the standard font program (`templates/fpgmtmpl.txt`);
 - the Control Program template (`templates/cvttmpl.txt`) with the heights and stems of `measure` written
-  into its CVTs (each with a comment naming the glyphs it was measured on, or "not measured");
+  into its CVTs, every CVT named in a comment, followed by the glyphs it was measured on or "not measured";
 - character groups (TSI5) from `templates/chargrp.txt` by Unicode, unencoded glyphs by their base name,
   else by Unicode category;
 - empty VTT Talk for every glyph, composites with VTT's component assembly (`OFFSET[R]`…).
@@ -87,24 +87,54 @@ def assign_groups(font: TTFont) -> dict[str, int]:
     return {name: GROUPS[of_name(name)] for name in font.getGlyphOrder()}
 
 
+# names of the template's height slots `measure` has no entry for; the other slots are named from
+# their attributes (`slot_name`)
+HEIGHT_NAMES = {1: "ascender overshoot", 16: "Other height", 17: "Other overshoot", 18: "Other baseline",
+                19: "Other undershoot"}
+_GROUP_ABBR = {"UpperCase": "UC", "LowerCase": "LC", "Figure": "figure", "Other": "Other"}
+
+
+def slot_name(n: int, cvt: dict) -> str | None:
+    """Short name of a template CVT from its attributes, in the style of `measure`'s names
+    ("UC X straight stroke", "LC serif height", "figure italic run")."""
+    if n in HEIGHT_NAMES:
+        return HEIGHT_NAMES[n]
+    g, cat, d = _GROUP_ABBR.get(cvt["group"], ""), cvt["category"], cvt["direction"]
+    if cat in ("StraightStroke", "RoundStroke"):
+        what = "diagonal stroke" if d == "Diag" else f"{d} {'straight' if cat == 'StraightStroke' else 'round'} stroke"
+    elif cat == "Distance":
+        what = f"{d} {'white ' if cvt['color'] == 'White' else ''}distance"
+    else:
+        what = {"ItalicRun": "italic run", "ItalicRise": "italic rise", "SerifExt": "serif extension",
+                "SerifHeight": "serif height"}.get(cat)
+    return f"{g} {what}".strip() if what else None
+
+
 def control_program(measured: dict[int, measure_mod.Measured]) -> str:
-    """The Control Program template with the measured values in its CVTs: `2: 690 /* cap height */
-    /* measured: H E F … (17/17) */`. CVTs inside comments (the template's examples) are not CVTs;
-    slots `measure` knows of but could not measure get 0 and a "not measured" comment."""
+    """The Control Program template with the measured values in its CVTs and a name on every CVT: `2: 690
+    /* cap height */ /* measured: H E F … (17/17) */`. The first comment is the CVT's name (viewers show
+    it as the label), the second the evidence. CVTs inside comments (the template's examples) are not
+    CVTs; slots that are not measured get 0 and "not measured". The second slot of a pair the template
+    leaves for a variant (69 after 68, …) is named "2nd …"."""
     src = template("cvttmpl.txt")
     defined = control.parse(src).cvts
-    for num, meas in measured.items():
-        if num not in defined:
+    seen = set()
+    for num, cvt in sorted(defined.items(), key=lambda kv: kv[1]["line"]):
+        meas = measured.get(num)
+        name = meas.what if meas is not None else slot_name(num, cvt)
+        if name is None:
             continue
-        if meas.value is None:
+        if name in seen:
+            name = f"2nd {name}"
+        seen.add(name)
+        if meas is None or meas.value is None:
             note = "not measured"
         elif meas.glyphs:
             note = f"measured: {' '.join(meas.glyphs[:8])}{' …' if len(meas.glyphs) > 8 else ''} ({meas.samples}/{meas.total})"
         else:
             note = f"= cvt {meas.parent}" if meas.parent is not None else ""
-        # the first comment is the CVT's name (viewers show it as the label), the second the evidence
-        src = control.set_cvt(src, num, value=meas.value if meas.value is not None else 0,
-                              name=meas.what, note=note)
+        value = meas.value if meas is not None and meas.value is not None else None if meas is None else 0
+        src = control.set_cvt(src, num, value=value, name=name, note=note)
     return src
 
 
