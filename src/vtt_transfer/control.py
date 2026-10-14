@@ -25,6 +25,7 @@ line ends and everything else stay as they are.
 from __future__ import annotations
 
 import bisect
+import re
 from dataclasses import asdict, dataclass, field
 
 # Built-in attribute values, in the compiler's order. A group's number is the one TSI5 stores; groups
@@ -217,7 +218,7 @@ class _Parser:
         self.group_numbers = {g: k for k, g in enumerate(GROUPS)}
         self.next_number = {"GROUP": FIRST_USER_GROUP, "CATEGORY": len(CATEGORIES)}
         self.prog = Program()
-        self.spans: dict = {"cvts": {}, "settings": {}, "declarations": [], "first": None}
+        self.spans: dict = {"cvts": {}, "settings": {}, "declarations": [], "asm": [], "first": None}
         self.ctx = {"group": None, "color": None, "direction": None, "category": None}
         self.group_tok = None
 
@@ -331,11 +332,12 @@ class _Parser:
 
     def inline(self):
         while self.is_kw("ASM"):
-            self.next()
+            kw = self.next()
             self.expect("(", "'('")
             lit = self.expect("lit", "actual TrueType code in quotes")
             self.expect(")", "')'")
             self.prog.asm.append(dict(line=self.line(lit.start), code=lit.text))
+            self.spans["asm"].append((kw.start, self.prev_end(), lit.text))
 
     # helpers
     def line(self, pos: int) -> int:
@@ -541,7 +543,7 @@ class _Parser:
                                  direction=self.ctx["direction"], category=self.ctx["category"],
                                  name=None, note=None, line=self.line(t.start), absolute=value)
         self.spans["cvts"][n] = dict(num=num_span, value=value_span, inherit=inh_span, ppem=ppem_span,
-                                     deltas=delta_span, end=end, next=self.tok.start,
+                                     deltas=delta_span, end=end, tail=self.prev_end(), next=self.tok.start,
                                      group_line=self.line(self.group_tok) if self.group_tok is not None
                                      else self.line(t.start))
 
@@ -794,3 +796,191 @@ def set_setting(text: str, key: str, value) -> str:
         return text[:ls] + new + nl + text[ls:]
     _, le, _ = _line_bounds(text, anchor)
     return text[:le] + nl + new + text[le:]
+
+
+# ---------------------------------------------------------------- adding and removing
+
+RESERVED = range(40, 65)            # VTT keeps these CVT numbers for itself
+HEIGHT_RANGE = range(0, 40)
+HEIGHTS = ("SquareHeight", "RoundHeight")
+_ROUND_CALL_RE = re.compile(r"^\s*CALL\[\s*\]\s*,\s*(\d+)\s*,\s*89\s*$")
+
+
+def _round_call(code: str) -> int | None:
+    """n of `CALL[], n, 89` (the template's rounding of a height), else None."""
+    m = _ROUND_CALL_RE.match(code)
+    return int(m.group(1)) if m else None
+
+
+def _rounding_pair(spans: dict, n: int) -> list[tuple[int, int]]:
+    """Spans of the `ASM("SVTCA[Y]") ASM("CALL[], n, 89")` pair right after CVT n, if it has one."""
+    sp = spans["cvts"][n]
+    trailing = [a for a in spans["asm"] if sp["end"] < a[0] <= sp["tail"]]
+    for a, b in zip(trailing, trailing[1:]):
+        if a[2].replace(" ", "") == "SVTCA[Y]" and _round_call(b[2]) == n:
+            return [a[:2], b[:2]]
+    return []
+
+
+def free_cvt(text: str, category: str | None = None) -> int:
+    """The number add_cvt picks: heights the first free below 40, others the first free from 65."""
+    used = set(parse(text).cvts)
+    start = 0 if category in HEIGHTS else RESERVED.stop
+    n = next((k for k in range(start, SHORT_MAX) if k not in used and k not in RESERVED), None)
+    if n is None:
+        raise ControlError("no free cvt number")
+    return n
+
+
+def _canon(kind: str, prog: Program, value):
+    """Canonical attribute name, None for Any…; raises for unknown names."""
+    if value is None:
+        return None
+    known = {"group": list(prog.groups), "color": COLORS, "direction": DIRECTIONS,
+             "category": list(CATEGORIES) + [d["name"] for d in prog.declarations if d["kind"] == "CATEGORY"]}[kind]
+    for k in known:
+        if k.upper() == str(value).upper():
+            return None if k.startswith("Any") else k
+    raise ControlError(f"unknown {kind} {value!r}")
+
+
+def _any(kind: str, value) -> str:
+    return value if value is not None else {"group": "AnyGroup", "color": "AnyColor",
+                                            "direction": "AnyDirection", "category": "AnyCategory"}[kind]
+
+
+ATTRS = ("group", "color", "direction", "category")
+
+
+def declare_group(text: str, name: str, spacing: str | None = None) -> str:
+    """Add `GROUP name ["spacing"]` after the declarations (or before the first statement). A group
+    that already exists is left alone."""
+    prog, spans = _parse(text)
+    if any(g.upper() == name.upper() for g in prog.groups):
+        return text
+    if not name.isascii() or not name.isalnum() or not name[0].isalpha() or name.upper() in _KEYWORD:
+        raise ControlError(f"invalid group name {name!r} (letters and digits, starting with a letter)")
+    line = f"GROUP {name}" + (f' "{spacing}"' if spacing else "")
+    nl = newline(text)
+    if spans["declarations"]:
+        _, le, _ = _line_bounds(text, spans["declarations"][-1][1])
+        return text[:le] + nl + line + text[le:]
+    if spans["first"] is None:
+        return text + ("" if not text or text.endswith(("\r", "\n")) else nl) + line + nl
+    ls, _, _ = _line_bounds(text, spans["first"])
+    return text[:ls] + line + nl + nl + text[ls:]
+
+
+def add_cvt(text: str, n: int | None = None, *, value: int, group: str | None, category: str | None,
+            direction: str | None = None, color: str | None = None, op: str | None = None,
+            parent: int | None = None, ppem: int | None = None, name: str | None = None,
+            note: str | None = None, round_height: bool | None = None,
+            declare: bool = False) -> tuple[str, int]:
+    """Add CVT n (None: `free_cvt`) and return (text, n).
+
+    Attributes are names (None = Any…). The CVT goes after the last CVT with the same attributes (that
+    comes after its parent); else after the last CVT of its group, with the attribute words it needs
+    and the previous ones restored after it; else at the end with all four words. A SquareHeight gets
+    the `ASM("SVTCA[Y]") ASM("CALL[], n, 89")` rounding pair if round_height, or by default if the
+    Control Program does that for its other square heights (Microsoft's template and VTThinter do).
+    declare: add a GROUP declaration for an unknown group instead of raising ControlError."""
+    prog, spans = _parse(text)
+    if group is not None and declare and not any(g.upper() == group.upper() for g in prog.groups):
+        text = declare_group(text, group)
+        prog, spans = _parse(text)
+    want = {k: _canon(k, prog, v) for k, v in zip(ATTRS, (group, color, direction, category))}
+    if n is None:
+        n = free_cvt(text, want["category"])
+    if n in prog.cvts:
+        raise ControlError(f"cvt {n} is already defined")
+    if not 0 <= n <= SHORT_MAX:
+        raise ControlError(f"cvt number {n} out of range")
+    if (op is None) != (parent is None) or (op is None) != (ppem is None):
+        raise ControlError("op, parent and ppem go together")
+    if op not in (None, "~", "="):
+        raise ControlError("op must be '~', '=' or None")
+    if parent is not None and parent not in prog.cvts:
+        raise ControlError(f"parent cvt {parent} is not defined")
+    if round_height is None:
+        round_height = want["category"] == "SquareHeight" and any(
+            _rounding_pair(spans, k) for k, c in prog.cvts.items() if c["category"] == "SquareHeight")
+
+    after = spans["cvts"][parent]["num"][0] if parent is not None else -1
+    order = sorted(prog.cvts, key=lambda k: spans["cvts"][k]["num"][0])
+    later = [k for k in order if spans["cvts"][k]["num"][0] > after]
+    same = [k for k in later if all(prog.cvts[k][a] == want[a] for a in ATTRS)]
+    grp = [k for k in later if prog.cvts[k]["group"] == want["group"]]
+    anchor = (same or grp or [None])[-1]
+
+    nl = newline(text)
+    body = f"{n}: {int(value)}" + (f" {op} {int(parent)} @{int(ppem)}" if op else "")
+    if name is not None:
+        body += " " + _comment(name)
+        if note:
+            body += " " + _comment(note)
+    pair = [f'ASM("SVTCA[Y]")', f'ASM("CALL[], {n}, 89")'] if round_height else []
+
+    if anchor is None:
+        words = " ".join(_any(a, want[a]) for a in ATTRS)
+        lines = [words, "  " + body, *pair]
+        stripped = text.rstrip(" \t\r\n")
+        tail = text[len(stripped):]
+        return stripped + nl + nl + nl.join(lines) + (tail if tail.strip(" \t") else nl), n
+
+    sp = spans["cvts"][anchor]
+    ls, _, _ = _line_bounds(text, sp["num"][0])
+    indent = text[ls:sp["num"][0]] if not text[ls:sp["num"][0]].strip() else "    "
+    have = {a: prog.cvts[anchor][a] for a in ATTRS}
+    diff = [a for a in ATTRS if have[a] != want[a]]
+    lines = []
+    if diff:
+        lines.append(indent[:max(0, len(indent) - 2)] + " ".join(_any(a, want[a]) for a in diff))
+    lines += [indent + body, *pair]
+    following = [k for k in order if spans["cvts"][k]["num"][0] > sp["num"][0]]
+    if diff and following:
+        lines.append(indent[:max(0, len(indent) - 2)] + " ".join(_any(a, have[a]) for a in diff))
+    tail = sp["tail"]
+    _, le, _ = _line_bounds(text, tail)
+    if spans["cvts"][anchor]["next"] < le:     # more statements on the same line: break it
+        return text[:tail] + nl + nl.join(lines) + nl + text[tail:].lstrip(" \t"), n
+    return text[:le] + nl + nl.join(lines) + text[le:], n
+
+
+def _delete(text: str, ranges: list[tuple[int, int]]) -> str:
+    """Remove the ranges; a line left with only white space goes with its line break."""
+    out = text
+    for s, e in sorted(ranges, reverse=True):
+        ls, le, after = _line_bounds(out, s)
+        if not out[ls:s].strip() and not out[e:le].strip() and e <= le:
+            s, e = ls, after
+        else:
+            while s > ls and out[s - 1] in " \t":
+                s -= 1
+        out = out[:s] + out[e:]
+    return out
+
+
+def remove_cvt(text: str, n: int) -> str:
+    """Remove CVT n: its declaration (not the attribute words before it: they still apply to the CVTs
+    after it), the comments on its line and its height rounding pair. Raises ControlError if n is not
+    defined or is the parent of other CVTs. Talk using it is not checked."""
+    prog, spans = _parse(text)
+    if n not in prog.cvts:
+        raise ControlError(f"cvt {n} is not defined in the Control Program")
+    children = sorted(k for k, c in prog.cvts.items() if c["parent"] == n)
+    if children:
+        raise ControlError(f"cvt {n} is the parent of cvt {', '.join(map(str, children))}")
+    sp = spans["cvts"][n]
+    start, end = sp["num"][0], sp["end"]
+    if sp["comments"]:
+        end = max(end, sp["comments"][-1][1])
+    ranges = [(start, end)]
+    ranges += _rounding_pair(spans, n)
+    # deleting by line keeps the remaining lines intact; ranges on one line are joined first
+    merged = []
+    for s, e in sorted(ranges):
+        if merged and _line_bounds(text, s)[0] == _line_bounds(text, merged[-1][1])[0]:
+            merged[-1] = (merged[-1][0], e)
+        else:
+            merged.append((s, e))
+    return _delete(text, merged)

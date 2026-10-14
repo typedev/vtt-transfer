@@ -101,7 +101,11 @@ the GROUP/CATEGORY declarations (TSI5 group numbers), the settings, the `ASM` st
 (value, `~`/`=` inheritance, break ppem, deltas, attributes, the first two comments of its line,
 absolute value) and the errors with their lines. It never raises. `set_cvt(text, n, value=…, ppem=…,
 deltas=…, name=…, note=…)` and `set_setting(text, key, value)` change only the edited tokens and keep
-comments, spacing and line ends. xscale and fresh are built on it.
+comments, spacing and line ends. `add_cvt` places a new CVT next to the CVTs with the same attributes
+(heights get the first free number below 40, others the first free from 65) and gives a square height
+the rounding pair (`ASM("SVTCA[Y]")`, `ASM("CALL[], n, 89")`) when the program does that for its other
+heights. `remove_cvt` removes a CVT with its comments and rounding pair, and refuses a CVT that is
+another CVT's parent; it does not look at glyph Talk. xscale and fresh are built on it.
 
 ## Release fonts: vtt-ship
 

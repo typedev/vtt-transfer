@@ -43,7 +43,8 @@ All code is in `src/vtt_transfer/`:
   driven by hintbench. Background: `hintbench/docs/XHEIGHT-SCALING.md`.
 - `control.py` — VTT Control Program parser and editor (port of VisualTrueType `src/CvtManager.cpp`;
   token based: sticky attributes, nested comments). `parse` → `Program` (declarations, settings, asm,
-  cvts, errors; never raises), `set_cvt` / `set_setting` edit the text, keeping its formatting.
+  cvts, errors; never raises), `set_cvt` / `set_setting` / `add_cvt` / `remove_cvt` / `declare_group`
+  edit the text, keeping its formatting.
   `blank_comments` lives here. xscale and fresh use it; hintbench builds its Control Program editor
   on it.
 - `fresh.py` — VTT sources for an unhinted static from Microsoft's templates (`templates/`, MIT, see
