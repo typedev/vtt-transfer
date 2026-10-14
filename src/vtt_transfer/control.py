@@ -469,6 +469,7 @@ class _Parser:
         self.spans["settings"][key] = (kw.start, self.prev_end())
 
     def cvt(self):
+        words = []      # (start, end, kind, name) of the attribute words of this declaration
         while self.tok.kind == "ident":
             t = self.tok
             a = self.attribute(t.text)
@@ -476,6 +477,7 @@ class _Parser:
                 raise _Err(t.start, f"unknown attribute {t.text!r}")
             self.next()
             kind, name = a
+            words.append((t.start, t.end, kind, None if name.startswith("Any") else name))
             self.ctx[kind] = None if name.startswith("Any") else name
             if kind == "group":
                 self.group_tok = t.start
@@ -543,7 +545,7 @@ class _Parser:
                                  direction=self.ctx["direction"], category=self.ctx["category"],
                                  name=None, note=None, line=self.line(t.start), absolute=value)
         self.spans["cvts"][n] = dict(num=num_span, value=value_span, inherit=inh_span, ppem=ppem_span,
-                                     deltas=delta_span, end=end, tail=self.prev_end(), next=self.tok.start,
+                                     deltas=delta_span, end=end, tail=self.prev_end(), next=self.tok.start, words=words,
                                      group_line=self.line(self.group_tok) if self.group_tok is not None
                                      else self.line(t.start))
 
@@ -878,9 +880,9 @@ def add_cvt(text: str, n: int | None = None, *, value: int, group: str | None, c
             declare: bool = False) -> tuple[str, int]:
     """Add CVT n (None: `free_cvt`) and return (text, n).
 
-    Attributes are names (None = Any…). The CVT goes after the last CVT with the same attributes (that
-    comes after its parent); else after the last CVT of its group, with the attribute words it needs
-    and the previous ones restored after it; else at the end with all four words. A SquareHeight gets
+    Attributes are names (None = Any…). The CVT goes after the CVT of its group (after its parent) that
+    shares most attributes, the last of equals, with the attribute words it needs and the previous ones
+    restored after it; with no CVT of its group, at the end with all four words. A SquareHeight gets
     the `ASM("SVTCA[Y]") ASM("CALL[], n, 89")` rounding pair if round_height, or by default if the
     Control Program does that for its other square heights (Microsoft's template and VTThinter do).
     declare: add a GROUP declaration for an unknown group instead of raising ControlError."""
@@ -907,10 +909,12 @@ def add_cvt(text: str, n: int | None = None, *, value: int, group: str | None, c
 
     after = spans["cvts"][parent]["num"][0] if parent is not None else -1
     order = sorted(prog.cvts, key=lambda k: spans["cvts"][k]["num"][0])
-    later = [k for k in order if spans["cvts"][k]["num"][0] > after]
-    same = [k for k in later if all(prog.cvts[k][a] == want[a] for a in ATTRS)]
+    later = [k for k in order if spans["cvts"][k]["num"][0] >= after]   # the parent itself too
+    # the CVT of the same group sharing most attributes (the last of equals), so a new height goes
+    # among the heights even if its color differs
     grp = [k for k in later if prog.cvts[k]["group"] == want["group"]]
-    anchor = (same or grp or [None])[-1]
+    anchor = max(grp, key=lambda k: (sum(prog.cvts[k][a] == want[a] for a in ATTRS),
+                                     spans["cvts"][k]["num"][0]), default=None)
 
     nl = newline(text)
     body = f"{n}: {int(value)}" + (f" {op} {int(parent)} @{int(ppem)}" if op else "")
@@ -925,7 +929,7 @@ def add_cvt(text: str, n: int | None = None, *, value: int, group: str | None, c
         lines = [words, "  " + body, *pair]
         stripped = text.rstrip(" \t\r\n")
         tail = text[len(stripped):]
-        return stripped + nl + nl + nl.join(lines) + (tail if tail.strip(" \t") else nl), n
+        return stripped + nl + nl.join(lines) + tail, n
 
     sp = spans["cvts"][anchor]
     ls, _, _ = _line_bounds(text, sp["num"][0])
@@ -953,6 +957,8 @@ def _delete(text: str, ranges: list[tuple[int, int]]) -> str:
         ls, le, after = _line_bounds(out, s)
         if not out[ls:s].strip() and not out[e:le].strip() and e <= le:
             s, e = ls, after
+            if e == len(out) and e == le and s:     # the last line, without a break: take the one before
+                s -= 2 if out.endswith("\r\n", 0, s) else 1
         else:
             while s > ls and out[s - 1] in " \t":
                 s -= 1
@@ -976,11 +982,30 @@ def remove_cvt(text: str, n: int) -> str:
         end = max(end, sp["comments"][-1][1])
     ranges = [(start, end)]
     ranges += _rounding_pair(spans, n)
-    # deleting by line keeps the remaining lines intact; ranges on one line are joined first
-    merged = []
-    for s, e in sorted(ranges):
-        if merged and _line_bounds(text, s)[0] == _line_bounds(text, merged[-1][1])[0]:
-            merged[-1] = (merged[-1][0], e)
+    ranges += _redundant_words(prog, spans, n)
+    return _delete(text, ranges)
+
+
+def _redundant_words(prog: Program, spans: dict, n: int) -> list[tuple[int, int]]:
+    """Attribute words that removing CVT n leaves without effect: its own words that no CVT after it
+    sees (the next CVT sets the same attribute, or there is none), then the next CVT's words that set
+    what is already set (e.g. the words add_cvt wrote to restore the context)."""
+    order = sorted(prog.cvts, key=lambda k: spans["cvts"][k]["num"][0])
+    i = order.index(n)
+    prev = prog.cvts[order[i - 1]] if i else {a: None for a in ATTRS}
+    nxt = spans["cvts"][order[i + 1]]["words"] if i + 1 < len(order) else None
+    own = spans["cvts"][n]["words"]
+    drop = []
+    ctx = {a: prev[a] for a in ATTRS}
+    for j, (s, e, kind, name) in enumerate(own):
+        later = [w[2] for w in own[j + 1:]] + [w[2] for w in (nxt or [])]
+        if nxt is None or kind in later:
+            drop.append((s, e))
         else:
-            merged.append((s, e))
-    return _delete(text, merged)
+            ctx[kind] = name
+    for s, e, kind, name in nxt or []:
+        if ctx[kind] == name:
+            drop.append((s, e))
+        else:
+            ctx[kind] = name
+    return drop
