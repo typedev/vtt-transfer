@@ -92,6 +92,13 @@ height), stems from scanline ink runs, kept apart by group (UpperCase / LowerCas
 and straight/round, keyed by the template's CVT numbers. Diagonals, serifs and italic CVTs are not
 measured. Used by hintbench's "from scratch" projects.
 
+For re-measuring one CVT from glyphs the operator picks: `measure_height(font, glyphs, "top"|"bottom")`,
+`measure_overshoot(font, glyphs, side, parent_value)` (round − flat) and `measure_stem(font, glyphs, axis,
+where, band=…)` take a string of characters (through the cmap) or a list of glyph names and return
+`{value, samples, total, glyphs, values, missing}` (`values`: each glyph's samples, to spot the one that
+disagrees; an empty or unknown set gives `value` None). `default_glyphs(cvt)` gives the set and
+parameters `measure` uses for a template CVT, None for the ones it does not measure.
+
 ## Control Program (library)
 
 `vtt_transfer.control` parses and edits the VTT Control Program (TSI1 `cvt` source). It is a port of

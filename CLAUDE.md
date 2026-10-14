@@ -49,7 +49,8 @@ All code is in `src/vtt_transfer/`:
   on it.
 - `fresh.py` — VTT sources for an unhinted static from Microsoft's templates (`templates/`, MIT, see
   `templates/NOTICE.md`; keep the files verbatim): `prepare(font)` → compiled font + report. `measure.py`
-  — heights and stems from the outlines, keyed by the template's CVT numbers. Library only; driven by
+  — heights and stems from the outlines, keyed by the template's CVT numbers (`measure`), or one CVT from
+  chosen glyphs (`measure_height` / `measure_overshoot` / `measure_stem`, `default_glyphs`). Library only; driven by
   hintbench ("from scratch" projects).
 - `ship.py` — `vtt-ship` entry point: compiles with vttcompilepy, strips TSI* tables, and `compare()`s against the designer's unhinted reference (`<name without .VTT>.ttf`); refuses to write on mismatch unless `--force`.
 

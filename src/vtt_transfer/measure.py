@@ -175,76 +175,161 @@ class _Font:
         self.gs = font.getGlyphSet()
         self.cmap = font.getBestCmap() or {}
         self.upm = font["head"].unitsPerEm
+        self.h_tol = max(4, round(self.upm * 0.005))
+        self.s_tol = max(3, round(self.upm * 0.003))
+        self._chars: dict[str, str] | None = None
         self._cache: dict[str, list] = {}
 
-    def outline(self, ch: str):
-        name = self.cmap.get(ord(ch))
+    def char(self, name: str) -> str | None:
+        """A character mapped to the glyph (the lowest code point), None if unencoded."""
+        if self._chars is None:
+            self._chars = {}
+            for code, n in sorted(self.cmap.items(), reverse=True):
+                self._chars[n] = chr(code)
+        return self._chars.get(name)
+
+    def resolve(self, glyphs) -> list[tuple[str | None, str | None, str]]:
+        """[(glyph name or None, character or None, as given)]: a str is a string of characters
+        (through the cmap), any other iterable holds glyph names."""
+        if isinstance(glyphs, str):
+            return [(self.cmap.get(ord(ch)), ch, ch) for ch in glyphs]
+        return [(n if n in self.gs else None, self.char(n), n) for n in glyphs]
+
+    def contours(self, name: str | None):
         if name is None or name not in self.gs:
-            return None, None
+            return None
         if name not in self._cache:
             self._cache[name] = _flatten(self.gs, name)
-        return name, self._cache[name] or None
+        return self._cache[name] or None
+
+
+def _font(font) -> _Font:
+    return font if isinstance(font, _Font) else _Font(font)
+
+
+def _result(vals: list[float], used: list[str], tol: float, missing: list[str]) -> dict:
+    """{value, samples, total, glyphs, values, missing}: value is the median of the dominant cluster,
+    None unless it has 2 samples or is the only sample; values maps each glyph to its samples."""
+    flat = [v for vs in vals for v in vs]
+    out = {"value": None, "samples": 0, "total": len(flat), "glyphs": used,
+           "values": {n: [round(v) for v in vs] for n, vs in zip(used, vals)}, "missing": missing}
+    cl = _cluster(flat, tol)
+    if cl and (cl[0][1] >= 2 or len(flat) == 1):
+        out["value"], out["samples"] = cl[0]
+    return out
+
+
+def measure_height(font, glyphs, side: str, *, tol: float | None = None) -> dict:
+    """A height from the outline tops (side "top") or bottoms ("bottom") of `glyphs` (a str of
+    characters, or glyph names): the dominant cluster of the extremes, as `measure` does.
+
+    Returns {value, samples, total, glyphs, values, missing}; `values` maps each measured glyph to
+    [its extreme], `missing` lists the entries without a glyph or an outline. Never raises on an empty
+    or unknown set (value None, total 0)."""
+    if side not in ("top", "bottom"):
+        raise ValueError(f"side must be 'top' or 'bottom', not {side!r}")
+    f = _font(font)
+    vals, used, missing = [], [], []
+    for name, _, given in f.resolve(glyphs):
+        b = _bounds(cs) if (cs := f.contours(name)) else None
+        if b:
+            vals.append([b[3] if side == "top" else b[1]])
+            used.append(name)
+        else:
+            missing.append(given)
+    return _result(vals, used, f.h_tol if tol is None else tol, missing)
+
+
+def measure_overshoot(font, glyphs, side: str, parent_value: int | None, *, tol: float | None = None) -> dict:
+    """A round height relative to its flat parent (`~ parent` in the template): `measure_height` of
+    the round `glyphs` minus `parent_value`. value is None when either is unknown; `values` stay
+    absolute, `absolute` holds the round height itself."""
+    m = measure_height(font, glyphs, side, tol=tol)
+    m["absolute"] = m["value"]
+    m["value"] = None if m["value"] is None or parent_value is None else m["value"] - parent_value
+    return m
+
+
+def _scan(contours, coord, axis):
+    for d in NUDGES:
+        runs = _runs(contours, coord + d, axis)
+        if runs:
+            return runs
+    return []
+
+
+def measure_stem(font, glyphs, axis: str, where, *, band: tuple[float, float] | None = None,
+                 tol: float | None = None) -> dict:
+    """A stroke width from ink runs cut by scanlines through `glyphs` (a str of characters, or glyph
+    names), as `measure` does for its STEMS.
+
+    axis "y": horizontal scanlines, measuring X (vertical) strokes; `where` is "mid" (the middle of each
+    glyph's bounding box) or fractions of `band` = (bottom, top), by default (0, upm/2).
+    axis "x": vertical scanlines at fractions of each glyph's width, measuring Y (horizontal) strokes;
+    `where` is a tuple of fractions or a dict of them per character or glyph name (others at 0.5).
+    Runs outside (s_tol, 0.35 upm] are dropped. Returns the dict of `measure_height`."""
+    if axis not in ("x", "y"):
+        raise ValueError(f"axis must be 'x' or 'y', not {axis!r}")
+    f = _font(font)
+    lo, hi = band if band is not None else (0, f.upm * 0.5)
+    max_stem = f.upm * 0.35
+    vals, used, missing = [], [], []
+    for name, ch, given in f.resolve(glyphs):
+        b = _bounds(cs) if (cs := f.contours(name)) else None
+        if not b:
+            missing.append(given)
+            continue
+        if axis == "y":
+            coords = [(b[1] + b[3]) / 2] if where == "mid" else [lo + (hi - lo) * t for t in where]
+        else:
+            fr = (where.get(ch) or where.get(name) or (0.5,)) if isinstance(where, dict) else where
+            coords = [b[0] + (b[2] - b[0]) * (t + d) for t in fr for d in (-0.05, 0.05)]
+        got = [w for c in coords for w in _scan(cs, c, axis) if f.s_tol < w <= max_stem]
+        if got:
+            vals.append(got)
+            used.append(name)
+    return _result(vals, used, f.s_tol if tol is None else tol, missing)
+
+
+_BASELINE = {2: 8, 6: 10, 4: 12}
+
+
+def default_glyphs(cvt: int) -> dict | None:
+    """What `measure` measures a CVT of the template from, for prefilling a re-measure:
+    {kind: "height" | "overshoot" | "stem", what, chars, ...}. Heights add `side`, overshoots `side`
+    and `parent` (the flat CVT the value is relative to), stems `axis`, `where` and `band` (the height
+    CVTs (bottom, top) the "y" scan fractions refer to). None for CVTs `measure` does not measure
+    from glyphs (the stroke parents 65–67 are copies, see `measure`)."""
+    if cvt in HEIGHTS:
+        what, chars, top = HEIGHTS[cvt]
+        return {"kind": "height", "what": what, "chars": chars, "side": "top" if top else "bottom"}
+    if cvt in ROUND_HEIGHTS:
+        what, chars, top, parent = ROUND_HEIGHTS[cvt]
+        return {"kind": "overshoot", "what": what, "chars": chars, "side": "top" if top else "bottom",
+                "parent": parent}
+    if cvt in STEMS:
+        what, chars, axis, where, band = STEMS[cvt]
+        return {"kind": "stem", "what": what, "chars": chars, "axis": axis, "where": where,
+                "band": (_BASELINE[band], band)}
+    return None
 
 
 def measure(font: TTFont) -> dict[int, Measured]:
     """Heights and stems of a static font, keyed by the template's CVT numbers."""
     f = _Font(font)
-    h_tol = max(4, round(f.upm * 0.005))
-    s_tol = max(3, round(f.upm * 0.003))
-    max_stem = f.upm * 0.35
     out: dict[int, Measured] = {}
 
-    def extremes(chars, top):
-        vals, used = [], []
-        for ch in chars:
-            name, cs = f.outline(ch)
-            b = _bounds(cs) if cs else None
-            if b:
-                vals.append(b[3] if top else b[1])
-                used.append(name)
-        return vals, used
-
-    def dominant(cvt, what, vals, used, tol, parent=None):
-        m = Measured(cvt, what, total=len(vals), glyphs=used, parent=parent)
-        cl = _cluster(vals, tol)
-        if cl and (cl[0][1] >= 2 or len(vals) == 1):
-            m.value, m.samples = cl[0]
-        out[cvt] = m
-        return m
+    def keep(cvt, what, m, parent=None):
+        out[cvt] = Measured(cvt, what, m["value"], m["samples"], m["total"], m["glyphs"], parent)
 
     for cvt, (what, chars, top) in HEIGHTS.items():
-        dominant(cvt, what, *extremes(chars, top), h_tol)
+        keep(cvt, what, measure_height(f, chars, "top" if top else "bottom"))
     for cvt, (what, chars, top, parent) in ROUND_HEIGHTS.items():
-        m = dominant(cvt, what, *extremes(chars, top), h_tol, parent)
-        base = out[parent].value
-        m.value = None if m.value is None or base is None else m.value - base
-
-    def scan(contours, coord, axis):
-        for d in NUDGES:
-            runs = _runs(contours, coord + d, axis)
-            if runs:
-                return runs
-        return []
-
+        keep(cvt, what, measure_overshoot(f, chars, "top" if top else "bottom", out[parent].value), parent)
     for cvt, (what, chars, axis, where, band) in STEMS.items():
-        band_top = out[band].value if band in out and out[band].value else (f.upm * 0.7 if band == 2 else f.upm * 0.5)
-        band_bot = out[{2: 8, 6: 10, 4: 12}[band]].value or 0
-        vals, used = [], []
-        for ch in chars:
-            name, cs = f.outline(ch)
-            b = _bounds(cs) if cs else None
-            if not b:
-                continue
-            if axis == "y":
-                coords = [(b[1] + b[3]) / 2] if where == "mid" else [band_bot + (band_top - band_bot) * t for t in where]
-            else:
-                fr = where.get(ch, (0.5,)) if isinstance(where, dict) else where
-                coords = [b[0] + (b[2] - b[0]) * (t + d) for t in fr for d in (-0.05, 0.05)]
-            got = [w for c in coords for w in scan(cs, c, axis) if s_tol < w <= max_stem]
-            if got:
-                vals += got
-                used.append(name)
-        dominant(cvt, what, vals, used, s_tol)
+        band_top = out[band].value or (f.upm * 0.7 if band == 2 else f.upm * 0.5)
+        band_bot = out[_BASELINE[band]].value or 0
+        keep(cvt, what, measure_stem(f, chars, axis, where, band=(band_bot, band_top)))
 
     # the parents: 66 (X) and 67 (Y) follow the lowercase straight strokes, the grand parent 65 is the
     # thinner of the two (so both may break loose from it at their own ppem)
