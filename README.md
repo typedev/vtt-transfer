@@ -65,6 +65,15 @@ If a VTThinter project lies next to the source (`family.hprj` for `family.VTT.tt
 - `TTFFileName`/`XMLFileName` are rewritten to the new font's name if it differs.
 - Only these values change; formatting and line endings (CRLF) are preserved.
 
+For a static cut by `vtt-var2static`, the VF's project (`family-vf.hprj` next to the VF, or `--hprj`) is
+copied as `<name>.hprj` with `TTFFileName`/`XMLFileName` set to the static and every `cvt`/`value` pair
+set to the static's CVT (the same as the VF's without `cvar`; a value that already disagreed with the
+VF's CVT is corrected and printed). The glyph lists stay as they are. The stem range of each class is
+checked against the strokes measured on the static (the thickest straight or round stroke, by the
+reference glyphs of `vtt_transfer.measure`: H I L / E, n m h u / z, 1 / 2 4 7, O o 0); a class outside
+its `stem min`–`max` is printed as a warning — bold statics need a wider range than the VF's default
+master. Classes without reference glyphs (superiors, parens, accents) are not measured.
+
 ## Statics cut from a hinted VF: vtt-var2static
 
 ```sh
@@ -81,12 +90,13 @@ is dropped when the subfamily says Italic, so `family_italic-vf` gives `family-B
 - `<name>.overlap.VTT.ttf` — the instance with overlaps and VTT sources (the transfer source);
 - `<name>.ttf` — overlaps removed, hinting stripped (the transfer target);
 - `<name>.VTT.ttf` — the target with the hints transferred and compiled; open it in VTT;
-- `<name>.vtt-transfer-report.html` — the transfer report: what was remapped, what needs re-hinting.
+- `<name>.vtt-transfer-report.html` — the transfer report: what was remapped, what needs re-hinting;
+- `<name>.hprj` — the VF's VTThinter project for this static, if the VF has one (see below).
 
 `--keep-overlaps` skips overlap removal: the instance keeps its hints as they are and is written as
 `<name>.VTT.ttf`, with nothing to transfer. `--ship` also writes release fonts without VTT sources into
 `DIR/hinted/` (as `vtt-ship`, checked against `<name>.ttf`), `--woff2` adds `.woff2`. Options
-`--report-lang`, `-q` as in `vtt-transfer`. Exit code: 0 — all good, 1 — some instance failed (cut,
+`--report-lang`, `-q`, `--hprj`, `--no-hprj` as in `vtt-transfer`. Exit code: 0 — all good, 1 — some instance failed (cut,
 transfer verification or ship check), 2 — the font has no VTT sources or no named instances.
 
 ### Library
