@@ -4,7 +4,7 @@ Transfers VTT hinting sources from a hinted version of a TrueType font (static o
 
 ## Installation
 
-Globally, so that `vtt-transfer` and `vtt-ship` work from any folder (`-e` picks up code changes without reinstalling):
+Globally, so that `vtt-transfer`, `vtt-var2static` and `vtt-ship` work from any folder (`-e` picks up code changes without reinstalling):
 
 ```sh
 uv tool install -e /path/to/vtt-transfer
@@ -28,7 +28,7 @@ uv run --project /path/to/vtt-transfer vtt-transfer OLD.VTT.ttf NEW.ttf   # from
 Next to `NEW.ttf` you get:
 
 - `NEW.VTT.ttf` — the new font with VTT sources (TSI0–TSI3, TSI5), `cvt`, `fpgm`, `prep`, `gasp` and `cvar`/`TSIC` (if present), compiled with vttcompilepy. It opens in VTT and work continues as usual.
-- `NEW.vtt-transfer.html` — the report.
+- `NEW.vtt-transfer-report.html` — the report.
 
 Options: `-o` output path, `--report` report path, `--report-lang en|ru` report language (default `ru`), `--no-compile` skip compilation, `--no-remap` no point remapping, `-q`.
 
@@ -65,7 +65,27 @@ If a VTThinter project lies next to the source (`family.hprj` for `family.VTT.tt
 - `TTFFileName`/`XMLFileName` are rewritten to the new font's name if it differs.
 - Only these values change; formatting and line endings (CRLF) are preserved.
 
-## Statics cut from a hinted VF (library)
+## Statics cut from a hinted VF: vtt-var2static
+
+```sh
+vtt-var2static path/family-vf.VTT.ttf [-o DIR] [-i "Condensed Light" -i Bold] [--keep-overlaps] [--ship [--woff2]]
+```
+
+Cuts every named instance of a hinted variable font (or only the ones given with `-i`: subfamily or
+file name, case and spaces ignored) into `DIR/<name>/` (default `statics/` next to the font):
+
+- `<name>.overlap.VTT.ttf` — the instance with overlaps and VTT sources (the transfer source);
+- `<name>.ttf` — overlaps removed, hinting stripped (the transfer target);
+- `<name>.VTT.ttf` — the target with the hints transferred and compiled; open it in VTT;
+- `<name>.vtt-transfer-report.html` — the transfer report: what was remapped, what needs re-hinting.
+
+`--keep-overlaps` skips overlap removal: the instance keeps its hints as they are and is written as
+`<name>.VTT.ttf`, with nothing to transfer. `--ship` also writes release fonts without VTT sources into
+`DIR/hinted/` (as `vtt-ship`, checked against `<name>.ttf`), `--woff2` adds `.woff2`. Options
+`--report-lang`, `-q` as in `vtt-transfer`. Exit code: 0 — all good, 1 — some instance failed (cut,
+transfer verification or ship check), 2 — the font has no VTT sources or no named instances.
+
+### Library
 
 `vtt_transfer.static` cuts the named instances of a hinted variable font
 (`doc/static-instances-from-vf.md`): `named_instances(vf, family)` lists them, `cut(vf_path, instance,
@@ -74,8 +94,7 @@ sources — the transfer source) and, with overlap removal, `<name>.ttf` (overla
 stripped — the transfer target). Overlap removal can turn a hinted on-curve point into an implied one
 (exactly between its off-curve neighbours); `cut` puts such points back, so the outline is the same and
 the remap finds them. Transferring source → target carries the hints over by exact remap.
-`work/make_instances.py` runs it for every instance; hintbench uses it from its UI. Needs
-`skia-pathops`. A `vtt-static` CLI is planned.
+`vtt-var2static` runs it for every instance; hintbench uses it from its UI. Needs `skia-pathops`.
 
 ## VTT sources from scratch (library)
 

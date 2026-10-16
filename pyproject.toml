@@ -13,6 +13,7 @@ dependencies = [
 [project.scripts]
 vtt-transfer = "vtt_transfer.cli:main"
 vtt-ship = "vtt_transfer.ship:main"
+vtt-var2static = "vtt_transfer.var2static:main"
 
 [build-system]
 requires = ["hatchling"]

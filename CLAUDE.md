@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A CLI that transfers VTT (Visual TrueType) hinting sources from a hinted version of a TrueType font (static or variable, `*.VTT.ttf`) into a new, unhinted version of the same font, compiles it with `vttcompilepy`, and writes an HTML report of what was transferred, remapped, and still needs hinting. A second CLI, `vtt-ship`, builds release fonts from VTT sources. README.md is the authoritative description of the matching rules and user-facing behaviour.
+A CLI that transfers VTT (Visual TrueType) hinting sources from a hinted version of a TrueType font (static or variable, `*.VTT.ttf`) into a new, unhinted version of the same font, compiles it with `vttcompilepy`, and writes an HTML report of what was transferred, remapped, and still needs hinting. `vtt-var2static` cuts hinted statics out of a hinted variable font (overlaps removed, hints transferred), and `vtt-ship` builds release fonts from VTT sources. README.md is the authoritative description of the matching rules and user-facing behaviour.
 
 ## Commands
 
@@ -12,14 +12,15 @@ Managed with `uv` (Python ≥3.11, hatchling build, deps: fonttools, vttcompilep
 
 ```sh
 uv sync                                         # set up .venv
-uv run vtt-transfer OLD.VTT.ttf NEW.ttf         # writes NEW.VTT.ttf + NEW.vtt-transfer.html (+ NEW.hprj if found)
+uv run vtt-transfer OLD.VTT.ttf NEW.ttf         # writes NEW.VTT.ttf + NEW.vtt-transfer-report.html (+ NEW.hprj if found)
 uv run vtt-transfer OLD.VTT.ttf NEW.ttf --report-lang en   # report language: en|ru (default ru)
 uv run vtt-transfer OLD.VTT.ttf NEW.ttf --no-compile --no-remap -q
+uv run vtt-var2static path/font-vf.VTT.ttf [-i Bold] [--ship]  # statics/<name>/<name>.VTT.ttf + report per named instance
 uv run vtt-ship path/font.VTT.ttf [--woff2]     # writes hinted/font.ttf without TSI* tables
-uv tool install -e .                            # global editable install of both commands
+uv tool install -e .                            # global editable install of all commands
 ```
 
-There are no tests, linter, or formatter configured. Verify changes by running the CLI on real font pairs (an older hinted `*.VTT.ttf` against a new unhinted build of the same family) and inspecting the report and the exit code (`vtt-transfer`: 0 ok, 1 verification errors, 2 transfer impossible; `vtt-ship`: 1 if any font failed).
+There are no tests, linter, or formatter configured. Verify changes by running the CLI on real font pairs (an older hinted `*.VTT.ttf` against a new unhinted build of the same family) and inspecting the report and the exit code (`vtt-transfer`: 0 ok, 1 verification errors, 2 transfer impossible; `vtt-var2static`: 1 if any instance failed, 2 no VTT sources or no named instances; `vtt-ship`: 1 if any font failed).
 
 ## Architecture
 
@@ -33,10 +34,11 @@ All code is in `src/vtt_transfer/`:
 - `hprj.py` — updates a VTThinter autohinter project (`.hprj`) next to the source: maps classes to TSI5 groups by majority, applies renames/removals/new glyphs. Edits values in place by regex, preserving formatting and CRLF line endings; never overwrites the source `.hprj`.
 - `i18n.py` — the message catalog (`MESSAGES`: key → (English, Russian)), `M(key, **params)` to create a `Msg`, `tr()` to render one. `str(msg)` is English (used for console output); the report renders in the chosen language via `Translator` (`t(...)` for plain text, `t.h(...)` for trusted-markup templates with escaped parameters).
 - `report.py` — `build(res, lang)` renders the self-contained HTML report (inline SVG glyph drawings via fontTools pens, old vs. new overlays).
-- `cli.py` — `vtt-transfer` entry point: argparse, calls `transfer`, `hprj.update`, `report.build`, prints a summary.
+- `cli.py` — `vtt-transfer` entry point: argparse, calls `transfer`, `hprj.update`, `report.build`, prints a summary (`summary()`, shared with var2static). Report names come from `core.default_report_path` (`*.vtt-transfer-report.html`).
+- `var2static.py` — `vtt-var2static` entry point: `static.cut` per named instance, `transfer` source → target, report, optionally `ship.ship_one` into `<out>/hinted/`.
 - `static.py` — cutting statics out of a hinted VF: `named_instances`, `cut` (instancer with overlaps
-  kept → transfer source; `removeOverlaps` + hinting stripped → transfer target). Library only so far;
-  used by `work/make_instances.py` and by hintbench.
+  kept → transfer source; `removeOverlaps` + hinting stripped → transfer target; `restore_implied_oncurves`).
+  Used by `vtt-var2static` and by hintbench.
 - `xscale.py` — ttfautohint-style x-height scaling written into the VTT sources: `find_heights`
   (height CVTs from the Control Program), `apply`/`remove`/`detect` (FDEF pair in the fpgm source + one
   `ASM("CALL[] …")` before the first height CVT). Edits TSI1 only, compiles nothing. Library only;

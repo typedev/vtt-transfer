@@ -392,6 +392,13 @@ def default_output_path(target: Path) -> Path:
     return target.with_name(f"{stem}.VTT.ttf")
 
 
+REPORT_SUFFIX = ".vtt-transfer-report.html"
+
+
+def default_report_path(output: Path) -> Path:
+    return output.with_name(output.name.removesuffix(".VTT.ttf").removesuffix(".ttf") + REPORT_SUFFIX)
+
+
 def transfer(source, target, *, output=None, remap=True, compile_=True, log=lambda *a: None) -> TransferResult:
     source, target = Path(source), Path(target)
     res = TransferResult(source, target)

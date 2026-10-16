@@ -8,9 +8,26 @@ from pathlib import Path
 
 from . import __version__
 from . import hprj
-from .core import TransferError, transfer
+from .core import TransferError, default_report_path, transfer
 from .i18n import DEFAULT_LANG, LANGS
 from .report import build
+
+
+def summary(res) -> list[str]:
+    """Console lines: glyph counts by status, then the warnings and errors of the checks."""
+    G = res.glyphs.values()
+    count = lambda *s: sum(1 for r in G if r.status in s)
+    out = [f"transferred: {count('transferred')}, remapped: {count('remapped')}, "
+           f"to re-hint: {count('rehint', 'compile_error')}, "
+           f"composites without own instructions: {count('composite_dropped')}, "
+           f"type changed: {count('type_changed')}, "
+           f"new: {count('new_simple')} simple unhinted / {count('new_twin')} with twin hints / "
+           f"{count('new_composite')} composites, "
+           f"removed: {len(res.removed)}"]
+    for c in res.checks:
+        if c.level in ("warn", "error"):
+            out.append(f"{'!' if c.level == 'error' else '~'} {c.title}: {c.detail}")
+    return out
 
 
 def main(argv=None) -> int:
@@ -49,7 +66,7 @@ def main(argv=None) -> int:
         return 2
 
     base = res.output_path.name.removesuffix(".VTT.ttf").removesuffix(".ttf")
-    report_path = a.report or res.output_path.with_name(base + ".vtt-transfer.html")
+    report_path = a.report or default_report_path(res.output_path)
     res.hprj = None
     if not a.no_hprj:
         src_h = a.hprj or hprj.find_for(a.source)
@@ -64,8 +81,6 @@ def main(argv=None) -> int:
     log("report…")
     report_path.write_text(build(res, a.report_lang), encoding="utf-8")
 
-    G = res.glyphs.values()
-    count = lambda *s: sum(1 for r in G if r.status in s)
     errors = [c for c in res.checks if c.level == "error"]
     print(f"{res.output_path}")
     print(f"{report_path}")
@@ -73,16 +88,8 @@ def main(argv=None) -> int:
         added = sum(len(c.added) for c in res.hprj.classes)
         print(f"{res.hprj.output}")
         print(f"  .hprj: added to classes {added}, without a class {len(res.hprj.unassigned)}")
-    print(f"  transferred: {count('transferred')}, remapped: {count('remapped')}, "
-          f"to re-hint: {count('rehint', 'compile_error')}, "
-          f"composites without own instructions: {count('composite_dropped')}, "
-          f"type changed: {count('type_changed')}, "
-          f"new: {count('new_simple')} simple unhinted / {count('new_twin')} with twin hints / "
-          f"{count('new_composite')} composites, "
-          f"removed: {len(res.removed)}")
-    for c in res.checks:
-        if c.level in ("warn", "error"):
-            print(f"  {'!' if c.level == 'error' else '~'} {c.title}: {c.detail}")
+    for line in summary(res):
+        print(f"  {line}")
     return 1 if errors else 0
 
 

@@ -1,7 +1,7 @@
 # Hinting static fonts from the hinted variable font
 
 Status: design notes written 2026-10-09; cutting implemented in `vtt_transfer.static` (see
-[Implementation](#implementation)), the `vtt-static` CLI is not.
+[Implementation](#implementation)) and the `vtt-var2static` CLI.
 fontTools behaviour below was checked against fontTools 4.66.1; numbers come from a feasibility run on a hinted variable sans (see [Feasibility](#feasibility)).
 
 ## Problem
@@ -129,7 +129,7 @@ Step 4.5 is what makes the remap trustworthy: a static is only accepted if its h
 
 ## Implementation
 
-`vtt_transfer.static` (2026-10-12) does the cutting; `work/make_instances.py` and hintbench drive it.
+`vtt_transfer.static` (2026-10-12) does the cutting; `vtt-var2static` (2026-10-16) and hintbench drive it.
 It differs from the proposal above in three ways:
 
 - **The whole transfer instead of a remap of replaced glyphs.** `cut()` writes the instance with
@@ -145,8 +145,9 @@ It differs from the proposal above in three ways:
 - **The render check (step 4.5) lives in hintbench**, not here: it renders source and target per
   ppem and accepts glyphs with Δ 0.
 
-Not done: the `vtt-static` CLI (release statics in one step) and suggesting candidates for lost
-points.
+The proposed `vtt-static` became `vtt-var2static`: cut, transfer and report per named instance,
+`--keep-overlaps`, `--ship` for release statics. Instances come from `fvar` only, not the designspace.
+Not done: suggesting candidates for lost points.
 
 ## Open questions
 
