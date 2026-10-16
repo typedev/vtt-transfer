@@ -129,6 +129,15 @@ MESSAGES: dict[str, tuple[str, str]] = {
     "chk_tables_changed": ("Tables unrelated to hinting changed", "Изменились таблицы, не связанные с хинтингом"),
     "chk_tables_ok": ("Other tables (gvar, GSUB, GPOS…) are unchanged",
                       "Остальные таблицы (gvar, GSUB, GPOS…) не изменены"),
+    "chk_implied": ("{n} glyphs lost {points} reference points as implied on-curves",
+                    "{n} глифов потеряли {points} опорных точек, ставших подразумеваемыми"),
+    "chk_implied_detail": (
+        "The outline is the same, the points are not: the target was most likely built by another "
+        "compiler (fontc, or fontmake --drop-implied-oncurves). Rebuild it with the compiler of the "
+        "hinted source (doc/compilers.md). {names}",
+        "Контур тот же, а точек нет: скорее всего, целевой шрифт собран другим компилятором (fontc "
+        "или fontmake --drop-implied-oncurves). Пересоберите его компилятором хинтованного исходника "
+        "(doc/compilers.md). {names}"),
     "chk_empty_bytecode": ("Some transferred glyphs have empty bytecode after compilation",
                            "У части перенесённых глифов пустой байткод после компиляции"),
 
@@ -157,6 +166,8 @@ MESSAGES: dict[str, tuple[str, str]] = {
     "note_no_remap": ("remap disabled (--no-remap)", "ремап отключён (--no-remap)"),
     "note_lost": ("reference points not found in the new outline: {lost} of {total}",
                   "опорные точки не найдены в новом контуре: {lost} из {total}"),
+    "note_implied": ("of them dropped as implied on-curves (target compiler): {n}",
+                     "из них выброшены как подразумеваемые (компилятор целевого шрифта): {n}"),
     "note_points": ("points: {a} → {b}, contours: {c} → {d}", "точек: {a} → {b}, контуров: {c} → {d}"),
     "note_components": ("components: {pairs}", "компоненты: {pairs}"),
     "note_offsets": ("component offsets changed (taken from the new font)",
@@ -184,6 +195,11 @@ MESSAGES: dict[str, tuple[str, str]] = {
     "lost_phantom_comp": ("phantom point {p} of component {c}: a flat glyph has no such point",
                           "фантомная точка {p} компонента {c}: в плоском глифе такой точки нет"),
     "lost_collision": ("two points mapped to the same one", "две точки сопоставились с одной"),
+    "lost_implied": (
+        "point {p} is gone as an implied on-curve between off-curve points {a} and {b}: the target was "
+        "built by a compiler that drops them (fontc, fontmake --drop-implied-oncurves)",
+        "точки {p} больше нет — она стала подразумеваемой между внеконтурными {a} и {b}: целевой шрифт "
+        "собран компилятором, который их выбрасывает (fontc, fontmake --drop-implied-oncurves)"),
 
     # ------------------------------------------------------------ character groups (core)
     "grp_composites": ("as most composites in the source", "как у большинства композитов в исходнике"),

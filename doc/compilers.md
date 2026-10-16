@@ -61,6 +61,9 @@ neighbours in the source, with the neighbours still present in the target, is al
 dropped implied on-curve. Many such glyphs in one transfer (round shapes: `O`, `Q`, `©`, `®`, `°`)
 point at the build, not the design.
 
-Possible extension (not implemented): detect this case in `point_mapping` and give the lost point
-the reason "dropped as an implied on-curve — target built by a compiler that drops them (fontc,
-fontmake --drop-implied-oncurves)", plus a check over the whole font.
+The transfer recognises this (`core.implied_oncurve`): such a lost point gets the reason "gone as an
+implied on-curve between off-curve points a and b", the glyph card says how many of its lost points
+these are, and a font-level check lists the glyphs (a warning from 3 glyphs on). The remap stays
+exact: the point does not exist in the target, so the glyph still goes to re-hint. The same check
+fires on statics cut before `static.restore_implied_oncurves` existed, where overlap removal dropped
+the points.

@@ -50,7 +50,7 @@ After compilation the tool verifies the result against the new font: outlines an
 
 ## Limitations
 
-- **Build the new font with the same compiler and options as the hinted source.** fontc drops implied on-curve points (exactly halfway between two off-curve points), fontmake keeps them unless `--drop-implied-oncurves` is passed. On one family a fontc build broke 14 hinted glyphs (`O`, `Q`, `©`, `®`, `°`…) and their composites that a fontmake build of the same sources transferred cleanly. See [doc/compilers.md](doc/compilers.md).
+- **Build the new font with the same compiler and options as the hinted source.** fontc drops implied on-curve points (exactly halfway between two off-curve points), fontmake keeps them unless `--drop-implied-oncurves` is passed. On one family a fontc build broke 14 hinted glyphs (`O`, `Q`, `©`, `®`, `°`…) and their composites that a fontmake build of the same sources transferred cleanly. The report flags reference points lost this way and warns when many glyphs are hit. See [doc/compilers.md](doc/compilers.md).
 - Remapping uses default-master coordinates: a point moved by even one unit is considered lost. This is intentional.
 - Composite code with point attachment (`ANCHOR`) is generated but flagged for manual review.
 - VOLT tables (TSIV etc.) are not transferred.

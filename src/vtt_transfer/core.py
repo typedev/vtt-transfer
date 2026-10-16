@@ -22,6 +22,7 @@ MAXP_HINT_FIELDS = (
     "maxInstructionDefs", "maxStackElements", "maxSizeOfInstructions",
 )
 
+IMPLIED_WARN = 3    # glyphs with reference points lost as implied on-curves before it looks like the build
 FLAG_ROUND = 0x0004
 FLAG_USE_MY_METRICS = 0x0200
 
@@ -79,7 +80,7 @@ class GlyphResult:
     hinted_in_source: bool = False
     geometry_changed: bool = False
     notes: list = field(default_factory=list)          # Msg
-    lost_points: list = field(default_factory=list)   # dicts: index, xy, nearest, nearest_xy
+    lost_points: list = field(default_factory=list)   # dicts: index, xy, reason, nearest, nearest_xy, implied
     mapping: dict = field(default_factory=dict)
     old_talk: str = ""
     old_asm: str = ""
@@ -316,6 +317,39 @@ def role_name(role: str) -> Msg | str:
         return role
 
 
+def contour_neighbours(ends, i):
+    """(previous, next) point of point i in its closed contour."""
+    start = 0
+    for e in ends:
+        if i <= e:
+            return (i - 1 if i > start else e), (i + 1 if i < e else start)
+        start = e + 1
+    return None
+
+
+def implied_oncurve(s: GlyphInfo, t: GlyphInfo, r: int, idx: dict):
+    """Target (a, b) if source on-curve point r is gone from the target as an implied on-curve: in the
+    source it lies at the midpoint (±0.5) of its two off-curve neighbours, and in the target those
+    neighbours are found, off-curve and adjacent. A compiler that drops implied on-curves does this
+    (fontc, fontmake --drop-implied-oncurves); the outline is the same, the point is not."""
+    if not s.oncurve[r]:
+        return None
+    nb = contour_neighbours(s.ends, r)
+    if not nb or r in nb or any(s.oncurve[k] for k in nb):
+        return None
+    (ax, ay), (bx, by), (x, y) = s.coords[nb[0]], s.coords[nb[1]], s.coords[r]
+    if abs(2 * x - ax - bx) > 1 or abs(2 * y - ay - by) > 1:
+        return None
+    found = []
+    for k in nb:
+        cands = [i for i in idx.get(s.coords[k], []) if not t.oncurve[i]]
+        if len(cands) != 1:
+            return None
+        found.append(cands[0])
+    a, b = found
+    return (a, b) if contour_neighbours(t.ends, a)[1] == b else None
+
+
 def point_mapping(s: GlyphInfo, t: GlyphInfo, refs: set[int]):
     """Map referenced source point numbers to target ones by exact default-master coordinates."""
     n_o, n_n = s.npoints, t.npoints
@@ -339,6 +373,8 @@ def point_mapping(s: GlyphInfo, t: GlyphInfo, refs: set[int]):
         entry = dict(index=r, xy=p, on=bool(s.oncurve[r]))
         if len(cands) > 1:
             entry["reason"] = M("lost_ambiguous", p=p)
+        elif (ab := implied_oncurve(s, t, r, idx)) is not None:
+            entry.update(implied=ab, reason=M("lost_implied", p=p, a=ab[0], b=ab[1]))
         elif t.coords:
             j = min(range(n_n), key=lambda i: (t.coords[i][0] - p[0]) ** 2 + (t.coords[i][1] - p[1]) ** 2)
             entry.update(nearest=j, nearest_xy=t.coords[j],
@@ -750,6 +786,16 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
     for g in s_order:
         if g not in mapped_src:
             res.removed.append(GlyphResult(g, REMOVED, si[g].kind, g, None, hinted_src[g]))
+
+    # reference points dropped as implied on-curves: a few may be design, many point at the compiler
+    implied = {n: k for n, r in res.glyphs.items() if (k := sum(1 for p in r.lost_points if p.get("implied")))}
+    for n, k in implied.items():
+        res.glyphs[n].notes.append(M("note_implied", n=k))
+    if implied:
+        names = ", ".join(list(implied)[:30]) + (" …" if len(implied) > 30 else "")
+        res.checks.append(Check("warn" if len(implied) >= IMPLIED_WARN else "info",
+                                M("chk_implied", n=len(implied), points=sum(implied.values())),
+                                M("chk_implied_detail", names=names)))
 
     # ------------------------------------------------------------ character groups
     role_groups: dict = {}
