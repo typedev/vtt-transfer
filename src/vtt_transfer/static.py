@@ -47,7 +47,9 @@ def named_instances(vf: TTFont, family: str) -> list[Instance]:
     out = []
     for inst in vf["fvar"].instances:
         sub = vf["name"].getDebugName(inst.subfamilyNameID) or f"Instance{len(out) + 1}"
-        out.append(Instance(f"{family}-{re.sub(r'[^A-Za-z0-9]+', '', sub)}", sub, dict(inst.coordinates)))
+        # an italic VF's file name says italic, and so does each subfamily: say it once
+        fam = re.sub(r"[_-]italic$", "", family, flags=re.I) if "italic" in sub.lower() else family
+        out.append(Instance(f"{fam}-{re.sub(r'[^A-Za-z0-9]+', '', sub)}", sub, dict(inst.coordinates)))
     return out
 
 

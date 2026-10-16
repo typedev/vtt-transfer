@@ -74,6 +74,10 @@ vtt-var2static path/family-vf.VTT.ttf [-o DIR] [-i "Condensed Light" -i Bold] [-
 Cuts every named instance of a hinted variable font (or only the ones given with `-i`: subfamily or
 file name, case and spaces ignored) into `DIR/<name>/` (default `statics/` next to the font):
 
+`<name>` is the font's file name without `-vf`/`_vf` plus the instance's subfamily without spaces
+(`family-vf.VTT.ttf`, `Condensed Light` → `family-CondensedLight`); an italic VF's `_italic`/`-italic`
+is dropped when the subfamily says Italic, so `family_italic-vf` gives `family-BoldItalic`.
+
 - `<name>.overlap.VTT.ttf` — the instance with overlaps and VTT sources (the transfer source);
 - `<name>.ttf` — overlaps removed, hinting stripped (the transfer target);
 - `<name>.VTT.ttf` — the target with the hints transferred and compiled; open it in VTT;
