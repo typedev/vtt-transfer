@@ -1,6 +1,7 @@
 # Hinting static fonts from the hinted variable font
 
-Status: design notes, not implemented. Written 2026-10-09.
+Status: design notes written 2026-10-09; cutting implemented in `vtt_transfer.static` (see
+[Implementation](#implementation)), the `vtt-static` CLI is not.
 fontTools behaviour below was checked against fontTools 4.66.1; numbers come from a feasibility run on a hinted variable sans (see [Feasibility](#feasibility)).
 
 ## Problem
@@ -125,6 +126,27 @@ vtt-static Font-VF.VTT.ttf --instances designspace|named [--remove-overlaps] -o 
 5. HTML report per static, reusing `report.py` (old/new overlay, lost points).
 
 Step 4.5 is what makes the remap trustworthy: a static is only accepted if its hinted rendering matches the overlapping original, except for the glyphs explicitly listed for manual work.
+
+## Implementation
+
+`vtt_transfer.static` (2026-10-12) does the cutting; `work/make_instances.py` and hintbench drive it.
+It differs from the proposal above in three ways:
+
+- **The whole transfer instead of a remap of replaced glyphs.** `cut()` writes the instance with
+  overlaps and VTT sources (`<name>.overlap.VTT.ttf`, the transfer source) and a copy with overlaps
+  removed and *all* hinting stripped (`removeOverlaps(removeHinting=True)`, hinting tables dropped:
+  `<name>.ttf`, the transfer target). `core.transfer()` then carries the hints over like between two
+  font versions: unchanged glyphs are copied, rebuilt ones remapped by exact coordinates, decomposed
+  composites assembled from component talk. One code path and one report instead of a second remapper.
+- **Implied on-curve points are restored.** skia-pathops merges two quadratic segments when their
+  shared on-curve point is exactly the midpoint of its off-curve neighbours, so a hinted point (often
+  an extremum) disappears. `restore_implied_oncurves` puts back every such point the source glyph had;
+  the outline does not change and the remap finds the point again.
+- **The render check (step 4.5) lives in hintbench**, not here: it renders source and target per
+  ppem and accepts glyphs with Δ 0.
+
+Not done: the `vtt-static` CLI (release statics in one step) and suggesting candidates for lost
+points.
 
 ## Open questions
 

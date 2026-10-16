@@ -71,7 +71,9 @@ If a VTThinter project lies next to the source (`family.hprj` for `family.VTT.tt
 (`doc/static-instances-from-vf.md`): `named_instances(vf, family)` lists them, `cut(vf_path, instance,
 out_dir, remove_overlaps=True)` writes `<name>.overlap.VTT.ttf` (the instance with overlaps and VTT
 sources — the transfer source) and, with overlap removal, `<name>.ttf` (overlaps removed, hinting
-stripped — the transfer target). Transferring source → target carries the hints over by exact remap.
+stripped — the transfer target). Overlap removal can turn a hinted on-curve point into an implied one
+(exactly between its off-curve neighbours); `cut` puts such points back, so the outline is the same and
+the remap finds them. Transferring source → target carries the hints over by exact remap.
 `work/make_instances.py` runs it for every instance; hintbench uses it from its UI. Needs
 `skia-pathops`. A `vtt-static` CLI is planned.
 
@@ -113,6 +115,18 @@ comments, spacing and line ends. `add_cvt` places a new CVT next to the CVTs wit
 the rounding pair (`ASM("SVTCA[Y]")`, `ASM("CALL[], n, 89")`) when the program does that for its other
 heights. `remove_cvt` removes a CVT with its comments and rounding pair, and refuses a CVT that is
 another CVT's parent; it does not look at glyph Talk. xscale and fresh are built on it.
+
+## X-height scaling (library)
+
+`vtt_transfer.xscale` adds ttfautohint-style x-height scaling to a VTT-hinted font, in its sources. VTT
+rounds every height CVT on its own, so at a size where the x-height rounds up the caps may round down;
+ttfautohint rounds the x-height (with overshoot) and scales all heights by the same factor before
+rounding. `apply(font, Params(mode="both"|"up", limit=14, maxppem=0))` adds two functions to the fpgm
+source and one `ASM("CALL[] …")` line in the Control Program before the first height CVT, so the
+scaling runs in the pre-program before VTT's own rounding. `find_heights` reads the height CVTs
+(SquareHeight / RoundHeight; the x-height is the LowerCase one equal to `OS/2.sxHeight`), `detect`
+reports the state of the scaling in the sources (including a call made stale by CVT edits), `remove`
+takes it out. Only TSI1 is edited; the caller compiles. Used by hintbench.
 
 ## Release fonts: vtt-ship
 
