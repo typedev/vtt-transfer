@@ -124,10 +124,10 @@ character groups (TSI5) from `chargrp.txt` by Unicode, unencoded glyphs by their
 category; empty Talk, composites with `OFFSET[R]` assembly. The compiler generates the pre-program from
 the Control Program. Returns the compiled font and a report (measurements, group counts).
 
-`vtt_transfer.measure.measure(font)`: heights from the
-dominant cluster of reference glyph tops/bottoms (Latin + Cyrillic; overshoots relative to their
-height), stems from scanline ink runs, kept apart by group (UpperCase / LowerCase / Figure), direction
-and straight/round, keyed by the template's CVT numbers. Diagonals, serifs and italic CVTs are not
+`vtt_transfer.measure.measure(font)`: heights from the dominant cluster of reference glyph
+tops/bottoms (Latin + Cyrillic; overshoots relative to their height), stems from scanline ink runs, kept
+apart by group (UpperCase / LowerCase / Figure), direction and straight/round, keyed by the template's
+CVT numbers. Diagonals, serifs and italic CVTs are not
 measured.
 
 For re-measuring one CVT from glyphs the operator picks: `measure_height(font, glyphs, "top"|"bottom")`,

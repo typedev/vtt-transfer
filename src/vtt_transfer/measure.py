@@ -1,10 +1,9 @@
 """Heights and stems measured from the outlines of an unhinted font, keyed by the CVT numbers of
 Microsoft's Control Program template (`templates/cvttmpl.txt`).
 
-Heights are the dominant
-cluster of the bounding-box tops/bottoms of reference glyphs, stems the dominant cluster of ink runs cut
-by scanlines. Stems are kept apart by character group (UpperCase, LowerCase, Figure),
-direction and straight/round, because the template's CVTs are laid out that way.
+Heights are the dominant cluster of the bounding-box tops/bottoms of reference glyphs, stems the
+dominant cluster of ink runs cut by scanlines. Stems are kept apart by character group (UpperCase,
+LowerCase, Figure), direction and straight/round, because the template's CVTs are laid out that way.
 
 Everything here is a measurement the operator confirms (shown as comments in the Control Program), not
 a decision: a slot without reference glyphs or without agreeing samples stays unmeasured.
