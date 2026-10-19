@@ -4,23 +4,26 @@ Transfers VTT hinting sources from a hinted version of a TrueType font (static o
 
 ## Installation
 
-Globally, so that `vtt-transfer`, `vtt-var2static` and `vtt-ship` work from any folder (`-e` picks up code changes without reinstalling):
+```sh
+uv tool install vtt-transfer      # or: pipx install vtt-transfer
+```
+
+This puts `vtt-transfer`, `vtt-var2static` and `vtt-ship` on the PATH. Python 3.11 or newer; the VTT
+compiler comes from [vttcompilepy](https://pypi.org/project/vttcompilepy/) wheels (Windows, macOS,
+Linux x86_64).
+
+From a checkout (`-e` picks up code changes without reinstalling):
 
 ```sh
 uv tool install -e /path/to/vtt-transfer
-```
-
-Or only the project's local environment:
-
-```sh
-cd /path/to/vtt-transfer
-uv sync
+# or only the project's local environment:
+cd /path/to/vtt-transfer && uv sync
 ```
 
 ## Usage
 
 ```sh
-vtt-transfer OLD.VTT.ttf NEW.ttf                     # after uv tool install
+vtt-transfer OLD.VTT.ttf NEW.ttf                     # after installation
 uv run vtt-transfer OLD.VTT.ttf NEW.ttf              # from the vtt-transfer folder
 uv run --project /path/to/vtt-transfer vtt-transfer OLD.VTT.ttf NEW.ttf   # from any folder
 ```
@@ -50,7 +53,7 @@ After compilation the tool verifies the result against the new font: outlines an
 
 ## Limitations
 
-- **Build the new font with the same compiler and options as the hinted source.** fontc drops implied on-curve points (exactly halfway between two off-curve points), fontmake keeps them unless `--drop-implied-oncurves` is passed. On one family a fontc build broke 14 hinted glyphs (`O`, `Q`, `©`, `®`, `°`…) and their composites that a fontmake build of the same sources transferred cleanly. The report flags reference points lost this way and warns when many glyphs are hit. See [doc/compilers.md](doc/compilers.md).
+- **Build the new font with the same compiler and options as the hinted source.** fontc drops implied on-curve points (exactly halfway between two off-curve points), fontmake keeps them unless `--drop-implied-oncurves` is passed. On one family a fontc build broke 14 hinted glyphs (`O`, `Q`, `©`, `®`, `°`…) and their composites that a fontmake build of the same sources transferred cleanly. The report flags reference points lost this way and warns when many glyphs are hit. See [doc/compilers.md](https://github.com/typedev/vtt-transfer/blob/master/doc/compilers.md).
 - Remapping uses default-master coordinates: a point moved by even one unit is considered lost. This is intentional.
 - Composite code with point attachment (`ANCHOR`) is generated but flagged for manual review.
 - VOLT tables (TSIV etc.) are not transferred.
@@ -108,7 +111,7 @@ sources — the transfer source) and, with overlap removal, `<name>.ttf` (overla
 stripped — the transfer target). Overlap removal can turn a hinted on-curve point into an implied one
 (exactly between its off-curve neighbours); `cut` puts such points back, so the outline is the same and
 the remap finds them. Transferring source → target carries the hints over by exact remap.
-`vtt-var2static` runs it for every instance; hintbench uses it from its UI. Needs `skia-pathops`.
+`vtt-var2static` runs it for every instance. Needs `skia-pathops`.
 
 ## VTT sources from scratch (library)
 
@@ -125,7 +128,7 @@ the Control Program. Returns the compiled font and a report (measurements, group
 dominant cluster of reference glyph tops/bottoms (Latin + Cyrillic; overshoots relative to their
 height), stems from scanline ink runs, kept apart by group (UpperCase / LowerCase / Figure), direction
 and straight/round, keyed by the template's CVT numbers. Diagonals, serifs and italic CVTs are not
-measured. Used by hintbench's "from scratch" projects.
+measured.
 
 For re-measuring one CVT from glyphs the operator picks: `measure_height(font, glyphs, "top"|"bottom")`,
 `measure_overshoot(font, glyphs, side, parent_value)` (round − flat) and `measure_stem(font, glyphs, axis,
@@ -159,7 +162,7 @@ source and one `ASM("CALL[] …")` line in the Control Program before the first 
 scaling runs in the pre-program before VTT's own rounding. `find_heights` reads the height CVTs
 (SquareHeight / RoundHeight; the x-height is the LowerCase one equal to `OS/2.sxHeight`), `detect`
 reports the state of the scaling in the sources (including a call made stale by CVT edits), `remove`
-takes it out. Only TSI1 is edited; the caller compiles. Used by hintbench.
+takes it out. Only TSI1 is edited; the caller compiles.
 
 ## Release fonts: vtt-ship
 
@@ -170,3 +173,15 @@ vtt-ship path/family-vf.VTT.ttf path/family-italic-vf.VTT.ttf [--woff2]   # or u
 Compiles the VTT sources (vttcompilepy, the same compiler as in VTT) and writes a font without the TSI* tables: hints, `cvt`, `fpgm`, `prep`, `gasp` stay. The result goes to a `hinted/` subfolder next to the source, named without `.VTT` (`-o DIR` to write elsewhere).
 
 Before writing, the result is checked against the designer's unhinted build (by default `<name without .VTT>.ttf` next to it, or `--reference`): outlines, composites with offsets and all tables unrelated to hinting must match. This catches stale composite code in VTT (VTT builds composites from the OFFSET lines in the sources, not from `glyf`). On a mismatch or a compile error the file is not written (`--force` to write anyway, `--no-check` to skip the check). Exit code 1 if any font failed.
+
+## Development
+
+```sh
+uv sync
+uv run python tests/smoke.py      # end-to-end run on a synthetic font, as in CI
+```
+
+## License
+
+MIT, see [LICENSE](https://github.com/typedev/vtt-transfer/blob/master/LICENSE). Parts are ported from or copied out of Microsoft's
+[VisualTrueType](https://github.com/microsoft/VisualTrueType) (MIT), see [NOTICE.md](https://github.com/typedev/vtt-transfer/blob/master/NOTICE.md).

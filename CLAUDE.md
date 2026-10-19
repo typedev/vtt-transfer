@@ -18,9 +18,10 @@ uv run vtt-transfer OLD.VTT.ttf NEW.ttf --no-compile --no-remap -q
 uv run vtt-var2static path/font-vf.VTT.ttf [-i Bold] [--ship]  # statics/<name>/<name>.VTT.ttf + report per named instance
 uv run vtt-ship path/font.VTT.ttf [--woff2]     # writes hinted/font.ttf without TSI* tables
 uv tool install -e .                            # global editable install of all commands
+uv run python tests/smoke.py                    # smoke test, as in CI
 ```
 
-There are no tests, linter, or formatter configured. Verify changes by running the CLI on real font pairs (an older hinted `*.VTT.ttf` against a new unhinted build of the same family) and inspecting the report and the exit code (`vtt-transfer`: 0 ok, 1 verification errors, 2 transfer impossible; `vtt-var2static`: 1 if any instance failed, 2 no VTT sources or no named instances; `vtt-ship`: 1 if any font failed).
+There is no linter or formatter and no unit tests. `uv run python tests/smoke.py` is an end-to-end run on a synthetic font (fresh → vtt-transfer → vtt-ship); CI (`.github/workflows/ci.yml`) runs it on Linux/macOS/Windows. It only catches breakage, so also verify changes by running the CLI on real font pairs (an older hinted `*.VTT.ttf` against a new unhinted build of the same family) and inspecting the report and the exit code (`vtt-transfer`: 0 ok, 1 verification errors, 2 transfer impossible; `vtt-var2static`: 1 if any instance failed, 2 no VTT sources or no named instances; `vtt-ship`: 1 if any font failed).
 
 ## Architecture
 
@@ -55,6 +56,10 @@ All code is in `src/vtt_transfer/`:
   chosen glyphs (`measure_height` / `measure_overshoot` / `measure_stem`, `default_glyphs`). Library only; driven by
   hintbench ("from scratch" projects).
 - `ship.py` — `vtt-ship` entry point: compiles with vttcompilepy, strips TSI* tables, and `compare()`s against the designer's unhinted reference (`<name without .VTT>.ttf`); refuses to write on mismatch unless `--force`.
+
+## Releases
+
+Published to PyPI as `vtt-transfer` by `.github/workflows/publish.yml` (trusted publishing, no tokens): a GitHub Release tagged `v<version>` publishes to PyPI; a manual run publishes to TestPyPI. The version lives only in `src/vtt_transfer/__init__.py`. The repo is public under MIT; code ported from Microsoft VisualTrueType is listed in `NOTICE.md`.
 
 ## Conventions
 
