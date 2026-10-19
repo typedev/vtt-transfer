@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fontTools.ttLib import TTFont
 
-from . import __version__
+from . import __version__, setup_console
 from .core import METRIC_CACHE_TABLES, program_bytes
 
 SOURCE_TABLES = ("TSI0", "TSI1", "TSI2", "TSI3", "TSI5", "TSIC", "TSIV", "TSID", "TSIJ", "TSIP", "TSIS", "TSIB")
@@ -119,6 +119,7 @@ def ship_one(src: Path, out_path: Path, reference: Path | None, woff2: bool, log
 
 
 def main(argv=None) -> int:
+    setup_console()
     p = argparse.ArgumentParser(
         prog="vtt-ship",
         description="Compiles VTT sources and writes release TTFs without the TSI* tables (hints are kept).",

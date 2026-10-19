@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import __version__
+from . import __version__, setup_console
 from . import hprj
 from .core import TransferError, default_report_path, transfer
 from .i18n import DEFAULT_LANG, LANGS
@@ -31,6 +31,7 @@ def summary(res) -> list[str]:
 
 
 def main(argv=None) -> int:
+    setup_console()
     p = argparse.ArgumentParser(
         prog="vtt-transfer",
         description="Transfers VTT hinting sources (TSI0–TSI5, cvt, fpgm, prep, gasp, cvar/TSIC) from a hinted "

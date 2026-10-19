@@ -20,7 +20,7 @@ from pathlib import Path
 
 from fontTools.ttLib import TTFont
 
-from . import __version__, hprj, static
+from . import __version__, hprj, setup_console, static
 from .cli import summary
 from .core import TransferError, default_report_path, transfer
 from .i18n import DEFAULT_LANG, LANGS
@@ -47,6 +47,7 @@ def static_hprj(src_hprj: Path, hinted: Path, ttf_name: str):
 
 
 def main(argv=None) -> int:
+    setup_console()
     p = argparse.ArgumentParser(
         prog="vtt-var2static",
         description="Cuts the named instances of a hinted variable font into hinted statics: overlaps "
