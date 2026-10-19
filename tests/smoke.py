@@ -83,9 +83,6 @@ def build(new: bool) -> TTFont:
                 sxHeight=500, sCapHeight=700)
     fb.setupPost()
     fb.setupMaxp()
-    maxp = fb.font["maxp"]
-    maxp.maxZones, maxp.maxTwilightPoints, maxp.maxStorage = 2, 16, 100
-    maxp.maxFunctionDefs, maxp.maxStackElements = 165, 335
     return fb.font
 
 

@@ -34,6 +34,9 @@ GROUPS = {"OTHER": 1, "UPPERCASE": 2, "LOWERCASE": 3, "FIGURE": 4}
 GROUP_NAMES = {v: k.capitalize() for k, v in GROUPS.items()}
 FLAG_ROUND = 0x0004
 FLAG_USE_MY_METRICS = 0x0200
+# The maxp minima VTT assumes when it recalculates maxp (VisualTrueType src/TTFont.cpp, MIN_ELEMENTS,
+# MIN_TWILIGHTPOINTS, MIN_STORAGE). The template's pre-program needs them; an unhinted build has zeros.
+MAXP_MINIMA = {"maxZones": 2, "maxTwilightPoints": 16, "maxStorage": 47}
 
 
 class FreshError(Exception):
@@ -176,6 +179,9 @@ def prepare(font: TTFont, measured: dict | None = None) -> tuple[TTFont, dict]:
     tsi3.extraPrograms = {}
     tsi5.glyphGrouping = groups
     font["TSI0"], font["TSI1"], font["TSI2"], font["TSI3"], font["TSI5"] = newTable("TSI0"), tsi1, newTable("TSI2"), tsi3, tsi5
+    maxp = font["maxp"]
+    for fld, least in MAXP_MINIMA.items():
+        setattr(maxp, fld, max(least, getattr(maxp, fld, 0)))
 
     c = vtt.Compiler.from_ttfont(font)
     c.compile_all()
