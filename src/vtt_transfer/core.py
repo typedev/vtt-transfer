@@ -350,39 +350,162 @@ def implied_oncurve(s: GlyphInfo, t: GlyphInfo, r: int, idx: dict):
     return (a, b) if contour_neighbours(t.ends, a)[1] == b else None
 
 
-def point_mapping(s: GlyphInfo, t: GlyphInfo, refs: set[int]):
-    """Map referenced source point numbers to target ones by exact default-master coordinates."""
+@dataclass
+class PointQuality:
+    """How a source point found its target point. kind: exact / shifted / ambiguous / lost.
+    shifted: target, distance (Euclidean, font units), dx, dy (target minus source).
+    ambiguous: candidates, (target, distance) pairs within the tolerance, nearest first."""
+    kind: str
+    target: int | None = None
+    distance: float = 0.0
+    dx: int = 0
+    dy: int = 0
+    candidates: tuple = ()
+
+
+@dataclass
+class PointMatch:
+    mapping: dict          # source point -> target point
+    lost: list             # dicts, as point_mapping returns them
+    quality: dict          # source point -> PointQuality
+
+
+def _contour_of(ends, i):
+    for c, e in enumerate(ends):
+        if i <= e:
+            return c
+    return None
+
+
+def near_matches(s: GlyphInfo, t: GlyphInfo, tolerance: float, ratio: float = 3.0):
+    """Source point -> (target, distance) for points with no exact match that have a near one, and
+    source point -> candidates for the ambiguous rest. Engine-neutral: contours and coordinates only.
+
+    Candidates are target points of the same kind (on-/off-curve) within `tolerance` (Euclidean),
+    not taken by an exact match. A pair is accepted only if it is unique from both sides: the
+    second-nearest candidate of the source point, and the second-nearest unmatched source point of the
+    target, are at least `ratio` times farther or beyond the tolerance. A pair is also refused when the
+    exact matches of the source point's contour went mostly to another target contour. Accepting a
+    pair can make another one unique, so this repeats until nothing changes; the nearest pairs win."""
+    idx: dict = {}
+    for i, p in enumerate(t.coords):
+        idx.setdefault(p, []).append(i)
+    exact, pending = {}, []
+    for r, p in enumerate(s.coords):
+        cands = [i for i in idx.get(p, []) if t.oncurve[i] == s.oncurve[r]]
+        if len(cands) == 1:
+            exact[r] = cands[0]
+        elif not cands and implied_oncurve(s, t, r, idx) is None:
+            pending.append(r)
+    # target contour the exact matches of each source contour went to, by majority
+    votes: dict = {}
+    for r, j in exact.items():
+        votes.setdefault(_contour_of(s.ends, r), Counter())[_contour_of(t.ends, j)] += 1
+    home = {c: v.most_common(1)[0][0] for c, v in votes.items()
+            if v.most_common(1)[0][1] * 2 > sum(v.values())}
+
+    def dist(r, j):
+        (x0, y0), (x1, y1) = s.coords[r], t.coords[j]
+        return ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
+
+    def unique(ds):   # ds: sorted distances
+        return len(ds) == 1 or ds[1] >= ratio * ds[0]
+
+    free = set(range(t.npoints)) - set(exact.values())
+    cand = {r: sorted((dist(r, j), j) for j in free
+                      if t.oncurve[j] == s.oncurve[r] and dist(r, j) <= tolerance) for r in pending}
+    near: dict = {}
+    while True:
+        open_src = [r for r in pending if r not in near]
+        taken = set(near.values())
+        back: dict = {}       # target -> sorted (distance, source) of open sources
+        for r in open_src:
+            for d, j in cand[r]:
+                if j not in taken:
+                    back.setdefault(j, []).append((d, r))
+        accepted = []
+        for r in open_src:
+            cs = [(d, j) for d, j in cand[r] if j not in taken]
+            if not cs or not unique([d for d, _ in cs]):
+                continue
+            d, j = cs[0]
+            bs = sorted(back[j])
+            if bs[0][1] != r or not unique([e for e, _ in bs]):
+                continue
+            c = home.get(_contour_of(s.ends, r))
+            if c is not None and _contour_of(t.ends, j) != c:
+                continue
+            accepted.append((d, r, j))
+        if not accepted:
+            break
+        for d, r, j in sorted(accepted):
+            if j not in set(near.values()):
+                near[r] = (j, d)
+    ambiguous = {r: tuple((j, round(d, 2)) for d, j in cand[r]) for r in pending
+                 if r not in near and cand[r]}
+    return near, ambiguous
+
+
+def match_points(s: GlyphInfo, t: GlyphInfo, refs: set[int], tolerance: float = 0, ratio: float = 3.0):
+    """Map referenced source point numbers to target ones by default-master coordinates: exact matches,
+    then, with a tolerance, unambiguous near ones (`near_matches`). tolerance=0 is exact matching only."""
     n_o, n_n = s.npoints, t.npoints
     idx: dict = {}
     for i, p in enumerate(t.coords):
         idx.setdefault(p, []).append(i)
-    mapping, lost = {}, []
+    near, ambiguous = near_matches(s, t, tolerance, ratio) if tolerance > 0 else ({}, {})
+    mapping, lost, quality = {}, [], {}
     for r in sorted(refs):
         if r >= n_o:
             k = r - n_o
             if k < 4:
                 mapping[r] = n_n + k   # phantom points follow the outline
+                quality[r] = PointQuality("exact", n_n + k)
             else:
                 lost.append(dict(index=r, xy=None, reason=M("lost_range")))
+                quality[r] = PointQuality("lost")
             continue
         p = s.coords[r]
         cands = [i for i in idx.get(p, []) if t.oncurve[i] == s.oncurve[r]]
         if len(cands) == 1:
             mapping[r] = cands[0]
+            quality[r] = PointQuality("exact", cands[0])
+            continue
+        if r in near:
+            j, d = near[r]
+            mapping[r] = j
+            q = t.coords[j]
+            quality[r] = PointQuality("shifted", j, round(d, 2), q[0] - p[0], q[1] - p[1])
             continue
         entry = dict(index=r, xy=p, on=bool(s.oncurve[r]))
         if len(cands) > 1:
             entry["reason"] = M("lost_ambiguous", p=p)
+            quality[r] = PointQuality("ambiguous", candidates=tuple((i, 0.0) for i in cands))
         elif (ab := implied_oncurve(s, t, r, idx)) is not None:
             entry.update(implied=ab, reason=M("lost_implied", p=p, a=ab[0], b=ab[1]))
-        elif t.coords:
-            j = min(range(n_n), key=lambda i: (t.coords[i][0] - p[0]) ** 2 + (t.coords[i][1] - p[1]) ** 2)
-            entry.update(nearest=j, nearest_xy=t.coords[j],
-                         reason=M("lost_missing", p=p, j=j, q=t.coords[j]))
+            quality[r] = PointQuality("lost")
+        elif r in ambiguous:
+            cs = ambiguous[r]
+            entry.update(nearest=cs[0][0], nearest_xy=t.coords[cs[0][0]], candidates=cs,
+                         reason=M("lost_near", p=p, c=", ".join(f"{j} {t.coords[j]}" for j, _ in cs)))
+            quality[r] = PointQuality("ambiguous", candidates=cs)
+        else:
+            if t.coords:
+                j = min(range(n_n), key=lambda i: (t.coords[i][0] - p[0]) ** 2 + (t.coords[i][1] - p[1]) ** 2)
+                entry.update(nearest=j, nearest_xy=t.coords[j],
+                             reason=M("lost_missing", p=p, j=j, q=t.coords[j]))
+            quality[r] = PointQuality("lost")
         lost.append(entry)
     if len(set(mapping.values())) != len(mapping):
         lost.append(dict(index=-1, xy=None, reason=M("lost_collision")))
-    return mapping, lost
+    return PointMatch(mapping, lost, quality)
+
+
+def point_mapping(s: GlyphInfo, t: GlyphInfo, refs: set[int], tolerance: float = 0, ratio: float = 3.0):
+    """(mapping, lost) of `match_points`: referenced source point numbers to target ones by exact
+    default-master coordinates, or near ones with a tolerance."""
+    m = match_points(s, t, refs, tolerance, ratio)
+    return m.mapping, m.lost
 
 
 def default_output_path(target: Path) -> Path:

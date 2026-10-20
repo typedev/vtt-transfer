@@ -194,6 +194,8 @@ MESSAGES: dict[str, tuple[str, str]] = {
     "lost_missing": ("point {p} is gone, nearest is {j} {q}", "точки {p} больше нет, ближайшая — {j} {q}"),
     "lost_phantom_comp": ("phantom point {p} of component {c}: a flat glyph has no such point",
                           "фантомная точка {p} компонента {c}: в плоском глифе такой точки нет"),
+    "lost_near": ("point {p} is gone, several points nearby: {c}",
+                  "точки {p} больше нет, рядом несколько точек: {c}"),
     "lost_collision": ("two points mapped to the same one", "две точки сопоставились с одной"),
     "lost_implied": (
         "point {p} is gone as an implied on-curve between off-curve points {a} and {b}: the target was "
