@@ -175,6 +175,8 @@ MESSAGES: dict[str, tuple[str, str]] = {
     "note_ncomponents": ("component count: {a} → {b}", "число компонентов: {a} → {b}"),
     "note_comp_dropped": ("composite's own instructions removed: the point structure of its components changed",
                           "собственные инструкции композита сняты: изменилась структура точек компонентов"),
+    "note_comp_remapped": ("composite's own instructions remapped to the new point numbers of its components",
+                           "собственные инструкции композита перенесены на новые номера точек компонентов"),
     "note_comp_dropped_in": (
         "composite's own instructions removed: the point structure of its components changed ({names})",
         "собственные инструкции композита сняты: изменилась структура точек компонентов ({names})"),

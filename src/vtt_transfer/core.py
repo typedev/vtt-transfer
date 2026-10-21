@@ -278,6 +278,92 @@ def render_component(prefixes, flag, gid, comp) -> list[str]:
     return out
 
 
+# accent rules of a composite's own program: (pattern, argument kinds) — p point, c contour, v value
+ASM_LINE_FORMS = (
+    (re.compile(r"^(\s*SVTCA\[[XY]\]\s*)$"), ""),
+    (re.compile(r"^(\s*SRP[012]\[\]\s*,\s*)(\d+)(\s*)$"), "p"),
+    (re.compile(r"^(\s*MDRP\[[^\]]*\]\s*,\s*)(\d+)(\s*)$"), "p"),
+    (re.compile(r"^(\s*SHC\[[12]\]\s*,\s*)(\d+)(\s*)$"), "c"),
+)
+ASM_CALL_RE = re.compile(r"^(\s*CALL\[\]\s*,\s*)([-\d\s,]+?)(\s*)$")
+ASM_CALL_ARGS = {164: "pp", 86: "ppvvv", 87: "pppvp"}   # VTT's standard fpgm: accent placement
+
+
+def remap_composite_body(body, s_comps: list, t_comps: list, s_total: int, t_total: int):
+    """A composite's own program with its point and contour numbers moved to the new components, exactly.
+
+    s_comps / t_comps are the components' GlyphInfo in order. A point belongs to a component in the
+    flattened numbering; a component with an unchanged structure keeps its local numbers, a changed one
+    maps them by `point_mapping`. Contours need an equal contour count. Only accent placement is
+    recognised (`ASM_LINE_FORMS`, `CALL[]` to fn 86, 87, 164); any other code, a lost point or a
+    component count change gives None. Returns (lines, mapping of changed flat point numbers)."""
+    if len(s_comps) != len(t_comps):
+        return None
+    starts = []
+    sp = tp = sc = tc = 0
+    for a, b in zip(s_comps, t_comps):
+        starts.append((sp, tp, sc, tc))
+        sp, tp, sc, tc = sp + a.npoints, tp + b.npoints, sc + len(a.ends), tc + len(b.ends)
+    cache: dict = {}
+
+    def point(p):
+        if p >= s_total:   # the composite's phantom points
+            return t_total + p - s_total if p - s_total < 4 else None
+        for i, (a, b) in enumerate(zip(s_comps, t_comps)):
+            p0, q0 = starts[i][:2]
+            if p0 <= p < p0 + a.npoints:
+                l = p - p0
+                if a.structure == b.structure:
+                    return q0 + l
+                if (i, l) not in cache:
+                    mapping, lost = point_mapping(a, b, {l})
+                    cache[i, l] = None if lost else mapping.get(l)
+                return None if cache[i, l] is None else q0 + cache[i, l]
+        return None
+
+    def contour(c):
+        for i, (a, b) in enumerate(zip(s_comps, t_comps)):
+            c0, d0 = starts[i][2:]
+            if c0 <= c < c0 + len(a.ends):
+                return d0 + c - c0 if len(a.ends) == len(b.ends) else None
+        return None
+
+    out, mapping = [], {}
+    for ln in body:
+        if not ln.strip() or re.fullmatch(r"\s*/\*.*?\*/\s*", ln):
+            out.append(ln)
+            continue
+        args, kinds = None, None
+        for rx, k in ASM_LINE_FORMS:
+            if m := rx.match(ln):
+                args, kinds = ([int(m.group(2))] if k else []), k
+                break
+        else:
+            m = ASM_CALL_RE.match(ln)
+            if not m:
+                return None
+            args = [int(x) for x in m.group(2).split(",") if x.strip()]
+            kinds = ASM_CALL_ARGS.get(args[-1]) if args else None
+            if kinds is None or len(args) != len(kinds) + 1:
+                return None
+            kinds += "v"
+        new = []
+        for v, k in zip(args, kinds):
+            w = point(v) if k == "p" else contour(v) if k == "c" else v
+            if w is None:
+                return None
+            if k == "p" and w != v:
+                mapping[v] = w
+            new.append(w)
+        if not kinds:
+            out.append(ln)
+        elif m.re is ASM_CALL_RE:
+            out.append(m.group(1) + ", ".join(map(str, new)) + m.group(3))
+        else:
+            out.append(m.group(1) + str(new[0]) + m.group(3))
+    return out, mapping
+
+
 def regions(font: TTFont) -> set:
     out = set()
     if "gvar" not in font:
@@ -896,13 +982,23 @@ def transfer(source, target, *, output=None, remap=True, compile_=True, log=lamb
                 r.notes.append(M("note_offsets"))
             if len(s.components) != len(info.components):
                 r.notes.append(M("note_ncomponents", a=len(s.components), b=len(info.components)))
+            remapped = None
+            if not same_struct and remap and lines_have_code(body) and not vtalk.has_code(talk_src):
+                remapped = remap_composite_body(body, [si[c] for c in s.components],
+                                                [ti[c] for c in info.components], s.npoints, info.npoints)
             keep = same_struct and lines_have_code(body)
-            n_asm[tname], notes = composite_asm(tname, blocks, header, body if keep else None, csep)
+            n_asm[tname], notes = composite_asm(tname, blocks, header,
+                                                remapped[0] if remapped else body if keep else None, csep)
             r.notes += notes
             if same_struct and vtalk.has_code(talk_src):
                 n_talk[tname] = talk_src
             set_program(tname, src_prog if same_struct and src_prog is not None else None)
-            if r.hinted_in_source and not same_struct and (lines_have_code(body) or vtalk.has_code(talk_src)):
+            if remapped:
+                r.status = REMAPPED
+                r.mapping = remapped[1]
+                r.old_asm = "\n".join(body)
+                r.notes.append(M("note_comp_remapped"))
+            elif r.hinted_in_source and not same_struct and (lines_have_code(body) or vtalk.has_code(talk_src)):
                 r.status = COMPOSITE_DROPPED
                 r.old_asm = "\n".join(body)
                 changed = [b for a, b in zip(s.components, info.components) if si[a].structure != ti[b].structure]
