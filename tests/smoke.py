@@ -2,7 +2,8 @@
 
 Builds a small unhinted TrueType font, gives it VTT sources with `fresh.prepare` and a bit of Talk,
 then runs vtt-transfer onto a new version (one glyph added, one outline moved) and vtt-ship on the
-result. Run: `uv run python tests/smoke.py`. Exits non-zero on failure.
+result, and cuts a static out of a variable version with `cvar` (the instanced CVT must survive the
+transfer's compile). Run: `uv run python tests/smoke.py`. Exits non-zero on failure.
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._g_l_y_f import Glyph, GlyphComponent
 
-from vtt_transfer import cli, fresh, ship
+from vtt_transfer import cli, core, fresh, ship, static
 
 UPM = 1000
 
@@ -86,6 +87,24 @@ def build(new: bool) -> TTFont:
     return fb.font
 
 
+def make_variable(font: TTFont) -> dict[int, int]:
+    """Make `font` a one-axis VF whose cvar moves an absolute and a relative (`~`) CVT at wght 700.
+    No gvar deltas and no STAT (so the instancer cannot update the names). Returns {cvt: delta}."""
+    from fontTools.ttLib import newTable
+    from fontTools.ttLib.tables.TupleVariation import TupleVariation
+
+    deltas = {2: 30, 7: 5}     # cap height; x height overshoot, relative to cvt 6
+    fb = FontBuilder(font=font)
+    fb.setupFvar([("wght", 400, 400, 700, "Weight")],
+                 [{"location": {"wght": 400}, "stylename": "Regular"},
+                  {"location": {"wght": 700}, "stylename": "Bold"}])
+    fb.setupGvar({})
+    cvar = font["cvar"] = newTable("cvar")
+    cvar.version, cvar.variations = 0x00010000, [
+        TupleVariation({"wght": (0, 1, 1)}, [deltas.get(i) for i in range(len(font["cvt "].values))])]
+    return deltas
+
+
 def check(cond, what):
     print(("ok   " if cond else "FAIL ") + what)
     if not cond:
@@ -117,6 +136,20 @@ def main() -> int:
         check(rc == 0, f"vtt-ship exit code {rc}")
         shipped = TTFont(d / "hinted" / "smoke-new.ttf")
         check(not any(t.startswith("TSI") for t in shipped.keys()), "shipped font has no TSI tables")
+
+        vf, _ = fresh.prepare(build(new=False))
+        deltas = make_variable(vf)
+        vf.save(d / "smoke-vf.VTT.ttf")
+        want = list(vf["cvt "].values)
+        for n, dv in deltas.items():
+            want[n] += dv
+        bold = next(i for i in static.named_instances(vf, "smoke-vf") if i.subfamily == "Bold")
+        cut = static.cut(d / "smoke-vf.VTT.ttf", bold, d / "statics", vf=vf)
+        check(list(TTFont(cut.source)["cvt "].values) == want, "cut static has the instanced cvt")
+        out = d / "statics" / "smoke-vf-Bold.VTT.ttf"
+        res = core.transfer(cut.source, cut.target, output=out)
+        check(res.compiled, "cut static compiled")
+        check(list(TTFont(out)["cvt "].values) == want, "instanced cvt survives the compile")
     return 0
 
 
