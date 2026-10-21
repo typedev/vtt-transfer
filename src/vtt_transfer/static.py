@@ -100,6 +100,33 @@ def restore_implied_oncurves(source: TTFont, target: TTFont) -> dict[str, int]:
     return out
 
 
+def instance_control_program(font: TTFont, default_cvt) -> list[int]:
+    """Write the instanced CVT into the Control Program text of `font` (an instancer result).
+
+    instancer applies cvar to the binary `cvt `, but the text still has the default master's values,
+    and every compile (the transfer's, VTT's "Compile everything") rebuilds `cvt ` from the text. Each
+    CVT whose value the instancer changed by d gets its written value shifted by d. A relative (`~`)
+    CVT is no exception: `cvt ` stores the value as written and cvar varies that, the parent link is
+    applied by the prep. Returns the CVT numbers edited."""
+    from . import control
+
+    tsi1 = font["TSI1"]
+    text = tsi1.extraPrograms.get("cvt")
+    if not text:
+        return []
+    inst = font["cvt "].values
+    d = {n: inst[n] - default_cvt[n] for n in range(min(len(inst), len(default_cvt)))}
+    cvts = control.parse(text).cvts
+    edited = []
+    for n, c in cvts.items():
+        shift = d.get(n, 0)
+        if shift:
+            text = control.set_cvt(text, n, value=c["value"] + shift)
+            edited.append(n)
+    tsi1.extraPrograms["cvt"] = text
+    return edited
+
+
 def cut(vf_path: Path, instance: Instance, out_dir: Path, *, remove_overlaps: bool = True,
         vf: TTFont | None = None, log=lambda *a: None) -> Cut:
     """Write the instance's transfer source (and, with `remove_overlaps`, its target) into `out_dir`."""
@@ -109,13 +136,22 @@ def cut(vf_path: Path, instance: Instance, out_dir: Path, *, remove_overlaps: bo
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     log(f"{instance.name}: instancing…")
-    src = instantiateVariableFont(vf, instance.location, inplace=False,
-                                  overlap=OverlapMode.KEEP_AND_SET_FLAGS, updateFontNames=True)
+    try:
+        src = instantiateVariableFont(vf, instance.location, inplace=False,
+                                      overlap=OverlapMode.KEEP_AND_SET_FLAGS, updateFontNames=True)
+    except ValueError as e:   # names come from STAT axis values; without them keep the VF's names
+        log(f"{instance.name}: name table not updated ({e})")
+        src = instantiateVariableFont(vf, instance.location, inplace=False,
+                                      overlap=OverlapMode.KEEP_AND_SET_FLAGS, updateFontNames=False)
     missing = [t for t in ("TSI1", "TSI3") if t not in src]
     if missing:
         raise StaticError(f"{instance.name}: instancer dropped {', '.join(missing)}")
     if "TSIC" in src:   # the cvar source is meaningless without fvar
         del src["TSIC"]
+    if "cvar" in vf and "cvt " in src:
+        edited = instance_control_program(src, vf["cvt "].values)
+        if edited:
+            log(f"{instance.name}: {len(edited)} CVTs instanced in the Control Program")
     source = out_dir / f"{instance.name}.overlap.VTT.ttf"
     src.save(source)
     if not remove_overlaps:

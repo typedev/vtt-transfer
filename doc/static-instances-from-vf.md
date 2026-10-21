@@ -71,7 +71,7 @@ Remapping must be done on **VTT Talk**, not on bytecode:
 - in TSI1 assembly the `Res*` commands compile to `CALL[]` of `fpgm` functions with opaque arguments;
 - in VTT Talk argument types are explicit (`YLink(3,7,42)`: two points and a CVT), and `talk.py` already whitelists the commands whose point arguments are known.
 
-Then compile the glyph programs for the specific static with vttcompilepy. The CVT is already instanced by instancer and must not be touched.
+Then compile the glyph programs for the specific static with vttcompilepy. instancer applies `cvar` to the binary `cvt `, but compiling rebuilds `cvt ` from the Control Program text (`TSI1`), which still has the default master's values. So `static.cut` writes the instanced values into the text (`instance_control_program`): each CVT that `cvar` changed by d is shifted by d, relative (`~`) CVTs included, since `cvt ` stores them as written and the parent link is applied in the prep.
 
 ### Where it breaks
 
@@ -102,7 +102,7 @@ Observations:
 - 49–62 glyphs per static need manual attention (plus 5 composites whose own instructions are lost). That is far fewer than hinting a static from scratch, but not zero, and the work repeats for every static.
 - The manual list is largely the same across instances (`Aring`, `Ccedilla`/`ccedilla`, `Oslash`/`oslash`, `uni015E`/`uni015F`, `uni0119`…), because the same constructions overlap at every weight.
 - No glyph was blocked by unsupported VTT Talk commands. All failures were lost reference points.
-- This source has no `cvar`, so the CVT is identical across instances. With `cvar` present the pipeline is the same, since instancer applies it.
+- This source has no `cvar`, so the CVT is identical across instances. With `cvar` present the pipeline is the same: instancer applies it, and `static.cut` carries the instanced values into the Control Program text so that compiling keeps them.
 
 Because the failures are structural (the same joins at every weight), a better long-term fix may be upstream: remove overlaps in the **VF sources** for the problem glyphs (or build them without overlaps from the start), so that VF and statics share one outline structure and need no remap. That is a design decision for the type designer, not the tool.
 
