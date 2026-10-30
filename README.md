@@ -134,7 +134,10 @@ For re-measuring one CVT from glyphs the operator picks: `measure_height(font, g
 `measure_overshoot(font, glyphs, side, parent_value)` (round − flat) and `measure_stem(font, glyphs, axis,
 where, band=…)` take a string of characters (through the cmap) or a list of glyph names and return
 `{value, samples, total, glyphs, values, missing}` (`values`: each glyph's samples, to spot the one that
-disagrees; an empty or unknown set gives `value` None). `default_glyphs(cvt)` gives the set and
+disagrees; an empty or unknown set gives `value` None). `measure_overshoot` counts only round extremes:
+glyphs whose extreme is a flat terminal or a corner (the tail of j or y in many designs), lies short of
+the parent, or more than 4 % of the em beyond it are left out and listed in `dropped` (glyph → `flat` /
+`short` / `far`). `default_glyphs(cvt)` gives the set and
 parameters `measure` uses for a template CVT, None for the ones it does not measure.
 
 ## Control Program (library)

@@ -18,9 +18,11 @@ from fontTools.ttLib import TTFont
 FLATTEN_STEPS = 24          # per curve segment; chord error is far below a unit on stem edges
 X_SCAN = (0.28, 0.72)       # horizontal scans for X stems, fractions of the band (dodge bars and serifs)
 NUDGES = (0.31, 1.17, -0.83)  # a scanline that hits a vertex is moved by these amounts
+MAX_OVERSHOOT = 0.04        # of the em: a round extreme farther from its flat parent is another height
 
 # Height slots: cvt → (what, chars, top?). Round slots are relative to their parent (`~ parent` in the
-# template): the value written is round − flat.
+# template): the value written is round − flat, measured from the glyphs whose extreme is round and lies
+# beyond the parent (see `measure_overshoot`; the tail of j or y often ends flat at the descender).
 HEIGHTS = {
     2: ("cap height", "HEFIKLTZ" "НПЕГТИМШЖ", True),
     8: ("cap baseline", "HEFIKLTZ" "НПЕГТИМШЖ", False),
@@ -36,7 +38,7 @@ ROUND_HEIGHTS = {
     9: ("cap undershoot", "OCGQS" "ОСЭЮ", False, 8),
     7: ("x-height overshoot", "oecs" "оесэ", True, 6),
     11: ("lowercase undershoot", "oecs" "оесэ", False, 10),
-    15: ("descender undershoot", "gj", False, 14),
+    15: ("descender undershoot", "gjy" "у", False, 14),
     5: ("figure overshoot", "0368", True, 4),
     13: ("figure undershoot", "0368", False, 12),
 }
@@ -153,6 +155,34 @@ def _runs(contours, coord: float, axis: str) -> list[float]:
     return [cross[i + 1] - cross[i] for i in range(0, len(cross), 2)]
 
 
+def _round_extreme(gs, name: str, y: float) -> bool:
+    """Whether the outline reaches `y` on curves only: no straight segment (a flat terminal, the
+    corner of a cut stroke) and no curve running along it touches that height."""
+    pen = DecomposingRecordingPen(gs)
+    gs[name].draw(pen)
+    at = lambda p: p is not None and abs(p[1] - y) <= 0.5
+    start = cur = None
+    for op, args in pen.value:
+        if op == "moveTo":
+            start = cur = args[0]
+        elif op == "lineTo":
+            if at(cur) or at(args[0]):
+                return False
+            cur = args[0]
+        elif op in ("curveTo", "qCurveTo"):
+            if args[-1] is None:        # TrueType contour of off-curve points only
+                start = cur = None
+            elif at(cur) and at(args[-1]):
+                return False
+            else:
+                cur = args[-1]
+        elif op in ("closePath", "endPath"):
+            if op == "closePath" and None not in (cur, start) and cur != start and (at(cur) or at(start)):
+                return False            # the implied closing line
+            start = cur = None
+    return True
+
+
 def _cluster(values: list[float], tol: float) -> list[tuple[int, int]]:
     """[(median, count)] of single-linkage clusters (gap > tol splits), largest first."""
     if not values:
@@ -218,6 +248,21 @@ def _result(vals: list[float], used: list[str], tol: float, missing: list[str]) 
     return out
 
 
+def _extremes(f: _Font, glyphs, side: str):
+    """([glyph name], [its top or bottom], [entries without a glyph or an outline])."""
+    if side not in ("top", "bottom"):
+        raise ValueError(f"side must be 'top' or 'bottom', not {side!r}")
+    used, ys, missing = [], [], []
+    for name, _, given in f.resolve(glyphs):
+        b = _bounds(cs) if (cs := f.contours(name)) else None
+        if b:
+            used.append(name)
+            ys.append(b[3] if side == "top" else b[1])
+        else:
+            missing.append(given)
+    return used, ys, missing
+
+
 def measure_height(font, glyphs, side: str, *, tol: float | None = None) -> dict:
     """A height from the outline tops (side "top") or bottoms ("bottom") of `glyphs` (a str of
     characters, or glyph names): the dominant cluster of the extremes, as `measure` does.
@@ -225,25 +270,36 @@ def measure_height(font, glyphs, side: str, *, tol: float | None = None) -> dict
     Returns {value, samples, total, glyphs, values, missing}; `values` maps each measured glyph to
     [its extreme], `missing` lists the entries without a glyph or an outline. Never raises on an empty
     or unknown set (value None, total 0)."""
-    if side not in ("top", "bottom"):
-        raise ValueError(f"side must be 'top' or 'bottom', not {side!r}")
     f = _font(font)
-    vals, used, missing = [], [], []
-    for name, _, given in f.resolve(glyphs):
-        b = _bounds(cs) if (cs := f.contours(name)) else None
-        if b:
-            vals.append([b[3] if side == "top" else b[1]])
-            used.append(name)
-        else:
-            missing.append(given)
-    return _result(vals, used, f.h_tol if tol is None else tol, missing)
+    used, ys, missing = _extremes(f, glyphs, side)
+    return _result([[y] for y in ys], used, f.h_tol if tol is None else tol, missing)
 
 
 def measure_overshoot(font, glyphs, side: str, parent_value: int | None, *, tol: float | None = None) -> dict:
-    """A round height relative to its flat parent (`~ parent` in the template): `measure_height` of
-    the round `glyphs` minus `parent_value`. value is None when either is unknown; `values` stay
-    absolute, `absolute` holds the round height itself."""
-    m = measure_height(font, glyphs, side, tol=tol)
+    """A round height relative to its flat parent (`~ parent` in the template): the dominant cluster
+    of the extremes of the round `glyphs`, as `measure_height`, minus `parent_value`.
+
+    Only round extremes count: a glyph is left out when its extreme is not on curves (a flat terminal
+    or a corner, `_round_extreme`), when it lies short of the parent (below a top, above a bottom: no
+    overshoot) or farther than MAX_OVERSHOOT of the em beyond it (another height, like a long g tail).
+    These are listed in `dropped` ({glyph: "flat" | "short" | "far"}) and kept in `values`, which stay
+    absolute; `glyphs` and `total` count the rest. value is None when nothing is left or the parent is
+    unknown; `absolute` holds the round height itself."""
+    f = _font(font)
+    used, ys, missing = _extremes(f, glyphs, side)
+    beyond = 1 if side == "top" else -1
+    dropped = {}
+    for name, y in zip(used, ys):
+        if not _round_extreme(f.gs, name, y):
+            dropped[name] = "flat"
+        elif parent_value is not None and (y - parent_value) * beyond < 0:
+            dropped[name] = "short"
+        elif parent_value is not None and abs(y - parent_value) > f.upm * MAX_OVERSHOOT:
+            dropped[name] = "far"
+    kept = [(n, y) for n, y in zip(used, ys) if n not in dropped]
+    m = _result([[y] for _, y in kept], [n for n, _ in kept], f.h_tol if tol is None else tol, missing)
+    m["values"] = {n: [round(y)] for n, y in zip(used, ys)}
+    m["dropped"] = dropped
     m["absolute"] = m["value"]
     m["value"] = None if m["value"] is None or parent_value is None else m["value"] - parent_value
     return m
