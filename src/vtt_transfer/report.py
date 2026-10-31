@@ -166,7 +166,7 @@ CSS = """
 --line:#2d2c2a;--card:#1f1e1c;--accent:#7ea2ff;--ok:#5cc28a;--warn:#e0a240;--err:#ff7a6b;--info:#9fb0c9;
 --glyph:#ecebe7;--old:#ff7a6b;--chip:#2a2927}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
-font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+font:15px/1.5 "Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 main{max-width:1180px;margin:0 auto;padding:28px 16px 80px}
 h1{font-size:26px;margin:0 0 4px}h2{display:inline;font-size:19px;margin:0}
 .paths{color:var(--muted);font-size:13px;word-break:break-all}.paths b{color:var(--fg);font-weight:600}
@@ -190,12 +190,12 @@ text-align:left;vertical-align:top}th{color:var(--muted);font-weight:600}
 svg.g{display:block;max-width:190px}svg.g .new{fill:var(--glyph);fill-opacity:.85}
 svg.g .old{fill:none;stroke:var(--old);stroke-width:14;stroke-dasharray:28 16}
 svg.g .base{stroke:var(--line);stroke-width:4}svg.g .lost{fill:var(--old)}
-svg.g .lbl{fill:var(--old);font-family:system-ui;font-weight:700;paint-order:stroke;stroke:var(--card);stroke-width:12}
+svg.g .lbl{fill:var(--old);font-family:"Inter",system-ui;font-weight:700;paint-order:stroke;stroke:var(--card);stroke-width:12}
 a{color:var(--accent)}
 .chips{display:flex;flex-wrap:wrap;gap:5px}.chip{background:var(--chip);border-radius:6px;padding:2px 7px;
-font-size:13px;font-family:ui-monospace,Menlo,Consolas,monospace}
-pre{background:var(--chip);padding:8px;border-radius:6px;font-size:12px;overflow:auto;max-height:260px}
-textarea{width:100%;font:12px ui-monospace,Menlo,monospace;background:var(--chip);color:var(--fg);
+font-size:13px;font-family:"Cascadia Code",ui-monospace,Menlo,Consolas,monospace;font-variant-ligatures:none}
+pre{background:var(--chip);padding:8px;border-radius:6px;font-size:12px;font-family:"Cascadia Code",ui-monospace,Menlo,Consolas,monospace;font-variant-ligatures:none;overflow:auto;max-height:260px}
+textarea{width:100%;font:12px "Cascadia Code",ui-monospace,Menlo,Consolas,monospace;font-variant-ligatures:none;background:var(--chip);color:var(--fg);
 border:1px solid var(--line);border-radius:6px;padding:6px}
 details.copy{margin-top:8px}h3{font-size:15px;margin:18px 0 8px}.muted{color:var(--muted)}
 .legend{font-size:13px;color:var(--muted)}.legend i{display:inline-block;width:22px;height:0;
