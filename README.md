@@ -119,7 +119,9 @@ the remap finds them. Transferring source → target carries the hints over by e
 templates (`src/vtt_transfer/templates/`, MIT, from microsoft/VisualTrueType — see `NOTICE.md`), as VTT's
 "Prepare Font" + "Control Program Only" would: glyf instructions and `fpgm`/`prep`/`cvt` dropped; the
 standard font program; the Control Program template with the values of `vtt_transfer.measure` written
-into its CVT lines (`2: 690 /* cap height */ /* measured: H E F … (17/17) */`, unmeasured slots marked);
+into its CVT lines (`2: 690 /* cap height */ /* measured: H E F … (17/17) */`, unmeasured slots marked
+"not measured"; an unmeasured child of an `=` inheritance gets its parent's value, so it keeps a width
+above its break ppem);
 character groups (TSI5) from `chargrp.txt` by Unicode, unencoded glyphs by their base name, else by Unicode
 category; empty Talk, composites with `OFFSET[R]` assembly. The compiler generates the pre-program from
 the Control Program. Returns the compiled font and a report (measurements, group counts).
@@ -127,12 +129,17 @@ the Control Program. Returns the compiled font and a report (measurements, group
 `vtt_transfer.measure.measure(font)`: heights from the dominant cluster of reference glyph
 tops/bottoms (Latin + Cyrillic; overshoots relative to their height), stems from scanline ink runs, kept
 apart by group (UpperCase / LowerCase / Figure), direction and straight/round, keyed by the template's
-CVT numbers. Diagonals, serifs and italic CVTs are not
-measured.
+CVT numbers. Diagonal strokes per group (UC from A V W У, LC from v w y у, figures from 4 7) from legs
+found between straight, nearly parallel outline edges: the first Diag slot gets the rectilinear width
+VTT's compiler gives a diagonal (RectilinearDistanceOfDiagonal: along X for a steep leg, along Y for a
+flat one, the larger end pair) — what Diagonal / DStroke take from the CVT; the template's spare second
+slot ("… across") the thickness perpendicular to the edges, for a Link measured across the edge
+(`ResXLink(1^0, 2, cvt)`). Serifs and italic CVTs are not measured.
 
 For re-measuring one CVT from glyphs the operator picks: `measure_height(font, glyphs, "top"|"bottom")`,
-`measure_overshoot(font, glyphs, side, parent_value)` (round − flat) and `measure_stem(font, glyphs, axis,
-where, band=…)` take a string of characters (through the cmap) or a list of glyph names and return
+`measure_overshoot(font, glyphs, side, parent_value)` (round − flat), `measure_stem(font, glyphs, axis,
+where, band=…)` and `measure_diagonal(font, glyphs, "rect"|"perp")` (`diagonal_legs(font, name)` lists
+a glyph's legs with their edges and both widths) take a string of characters (through the cmap) or a list of glyph names and return
 `{value, samples, total, glyphs, values, missing}` (`values`: each glyph's samples, to spot the one that
 disagrees; an empty or unknown set gives `value` None). `measure_overshoot` counts only round extremes:
 glyphs whose extreme is a flat terminal or a corner (the tail of j or y in many designs), lies short of

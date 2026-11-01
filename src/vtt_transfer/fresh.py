@@ -117,26 +117,33 @@ def control_program(measured: dict[int, measure_mod.Measured]) -> str:
     """The Control Program template with the measured values in its CVTs and a name on every CVT: `2: 690
     /* cap height */ /* measured: H E F … (17/17) */`. The first comment is the CVT's name (viewers show
     it as the label), the second the evidence. CVTs inside comments (the template's examples) are not
-    CVTs; slots that are not measured get 0 and "not measured". The second slot of a pair the template
+    CVTs; slots that are not measured get 0 and "not measured", or, for a child of an "=" inheritance, its
+parent's value ("not measured, = cvt 68"), so the stroke keeps a width above the break ppem. The second slot of a pair the template
     leaves for a variant (69 after 68, …) is named "2nd …"."""
     src = template("cvttmpl.txt")
     defined = control.parse(src).cvts
     seen = set()
+    written: dict[int, int] = {}    # cvt → value as written (absolute for "=" and plain slots)
     for num, cvt in sorted(defined.items(), key=lambda kv: kv[1]["line"]):
         meas = measured.get(num)
         name = meas.what if meas is not None else slot_name(num, cvt)
         if name is None:
             continue
-        if name in seen:
-            name = f"2nd {name}"
+        if name in seen:   # the template's spare second slot; a diagonal's holds the width across the edges
+            name = f"{name} across" if cvt["direction"] == "Diag" else f"2nd {name}"
         seen.add(name)
-        if meas is None or meas.value is None:
-            note = "not measured"
-        elif meas.glyphs:
-            note = f"measured: {' '.join(meas.glyphs[:8])}{' …' if len(meas.glyphs) > 8 else ''} ({meas.samples}/{meas.total})"
+        if meas is not None and meas.value is not None:
+            value = meas.value
+            if meas.glyphs:
+                note = f"measured: {' '.join(meas.glyphs[:8])}{' …' if len(meas.glyphs) > 8 else ''} ({meas.samples}/{meas.total})"
+            else:
+                note = f"= cvt {meas.parent}" if meas.parent is not None else ""
+        elif cvt["op"] == "=" and written.get(cvt["parent"]):
+            # an unmeasured child takes its parent's value: 0 would collapse the stroke above the break ppem
+            value, note = written[cvt["parent"]], f"not measured, = cvt {cvt['parent']}"
         else:
-            note = f"= cvt {meas.parent}" if meas.parent is not None else ""
-        value = meas.value if meas is not None and meas.value is not None else None if meas is None else 0
+            value, note = (None if meas is None else 0), "not measured"
+        written[num] = value if value is not None else cvt["value"]
         src = control.set_cvt(src, num, value=value, name=name, note=note)
     return src
 

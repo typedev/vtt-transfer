@@ -2,7 +2,8 @@
 Microsoft's Control Program template (`templates/cvttmpl.txt`).
 
 Heights are the dominant cluster of the bounding-box tops/bottoms of reference glyphs, stems the
-dominant cluster of ink runs cut by scanlines. Stems are kept apart by character group (UpperCase,
+dominant cluster of ink runs cut by scanlines, diagonal strokes that of the widths of the legs found
+between straight, nearly parallel edges. Stems are kept apart by character group (UpperCase,
 LowerCase, Figure), direction and straight/round, because the template's CVTs are laid out that way.
 
 Everything here is a measurement the operator confirms (shown as comments in the Control Program), not
@@ -10,6 +11,8 @@ a decision: a slot without reference glyphs or without agreeing samples stays un
 """
 
 from __future__ import annotations
+
+import math
 
 from dataclasses import asdict, dataclass, field
 from fontTools.pens.recordingPen import DecomposingRecordingPen
@@ -61,6 +64,24 @@ STEMS = {
     101: ("figure Y straight stroke", "247", "x", {"2": (0.8,), "4": (0.9,), "7": (0.6,)}, 4),
     103: ("figure Y round stroke", "0", "x", (0.5,), 4),
 }
+# Diagonal slots: cvt → (what, chars, how). "rect" is the width VTT's compiler gives a diagonal stroke
+# (TTGenerator.cpp RectilinearDistanceOfDiagonal: along X for a steep leg, along Y for a flat one, along
+# the average edge direction; the larger of the two end pairs), the one Diagonal / DStroke expect in their
+# CVT. "perp" is the leg's thickness perpendicular to its edges, for a Link / Dist measured across the
+# edge (`ResXLink(1^0, 2, cvt)`); the template's spare second slot of each group holds it.
+DIAGONALS = {
+    76: ("UC diagonal stroke", "AVW" "У", "rect"),
+    77: ("UC diagonal stroke across", "AVW" "У", "perp"),
+    89: ("LC diagonal stroke", "vwy" "у", "rect"),
+    90: ("LC diagonal stroke across", "vwy" "у", "perp"),
+    105: ("figure diagonal stroke", "47", "rect"),
+    106: ("figure diagonal stroke across", "47", "perp"),
+}
+DIAG_MIN_ANGLE = 8          # degrees from either axis: steeper or flatter is a straight stroke
+DIAG_PARALLEL = 6           # degrees: the two edges of a leg
+DIAG_MIN_EDGE = 0.1         # of the em: shorter straight segments are not leg edges
+DIAG_OVERLAP = 0.4          # the edges must overlap along the leg by this part of the shorter one
+
 # parents: the first measured of these (lowercase first: most text is lowercase)
 X_PARENT, Y_PARENT = (81, 68, 97), (85, 72)
 
@@ -153,6 +174,119 @@ def _runs(contours, coord: float, axis: str) -> list[float]:
     if len(cross) % 2:
         return []
     return [cross[i + 1] - cross[i] for i in range(0, len(cross), 2)]
+
+
+def _lines(gs, name: str) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    """The straight segments of a glyph's outline (the implied closing line included), components
+    decomposed."""
+    pen = DecomposingRecordingPen(gs)
+    gs[name].draw(pen)
+    out, start, cur = [], None, None
+    for op, args in pen.value:
+        if op == "moveTo":
+            start = cur = args[0]
+        elif op == "lineTo":
+            if cur is not None:
+                out.append((cur, args[0]))
+            cur = args[0]
+        elif op in ("curveTo", "qCurveTo"):
+            cur = args[-1]
+            if cur is None:             # TrueType contour of off-curve points only
+                start = None
+        elif op in ("closePath", "endPath"):
+            if op == "closePath" and None not in (cur, start) and cur != start:
+                out.append((cur, start))
+            start = cur = None
+    return out
+
+
+def _spans(contours, coord: float, axis: str) -> list[tuple[float, float]]:
+    """Ink runs along a scanline as (start, end), like `_runs`, moved by NUDGES off vertices."""
+    a_i, o_i = (1, 0) if axis == "y" else (0, 1)
+    for d in NUDGES:
+        cross = []
+        for c in contours:
+            for i in range(len(c)):
+                p, q = c[i], c[(i + 1) % len(c)]
+                a, b = p[a_i] - coord - d, q[a_i] - coord - d
+                if a * b < 0:
+                    cross.append(p[o_i] + a / (a - b) * (q[o_i] - p[o_i]))
+        cross.sort()
+        if cross and len(cross) % 2 == 0:
+            return [(cross[i], cross[i + 1]) for i in range(0, len(cross), 2)]
+    return []
+
+
+def diagonal_legs(font, name: str) -> list[dict]:
+    """The diagonal legs of a glyph: pairs of straight, nearly parallel outline edges running opposite
+    ways with ink between them. Each leg: {steep, edges: ((p1, p3), (p2, p4)) ordered along the leg,
+    rect: [width at the start pair, at the end pair], perp: [the same perpendicular to the edges]}.
+    `rect` is VTT's RectilinearDistanceOfDiagonal for the points p1..p4 (see DIAGONALS)."""
+    f = _font(font)
+    cs = f.contours(name)
+    if not cs:
+        return []
+    segs = []
+    for p, q in _lines(f.gs, name):
+        dx, dy = q[0] - p[0], q[1] - p[1]
+        length = math.hypot(dx, dy)
+        if length < f.upm * DIAG_MIN_EDGE:
+            continue
+        if DIAG_MIN_ANGLE <= math.degrees(math.atan2(abs(dy), abs(dx))) <= 90 - DIAG_MIN_ANGLE:
+            segs.append((p, q, (dx / length, dy / length)))
+    cos_par = math.cos(math.radians(DIAG_PARALLEL))
+    legs = []
+    for i, (p1, q1, u) in enumerate(segs):
+        for p2, q2, v in segs[i + 1:]:
+            if u[0] * v[0] + u[1] * v[1] > -cos_par:   # an ink stroke's edges run opposite ways
+                continue
+            dx, dy = (u[0] - v[0]) / 2, (u[1] - v[1]) / 2
+            steep = abs(dx) <= abs(dy)
+            k = 1 if steep else 0                       # the coordinate along the leg
+            a = sorted((p1, q1), key=lambda p: p[k])
+            b = sorted((p2, q2), key=lambda p: p[k])
+            lo, hi = max(a[0][k], b[0][k]), min(a[1][k], b[1][k])
+            if hi - lo < DIAG_OVERLAP * min(a[1][k] - a[0][k], b[1][k] - b[0][k]):
+                continue
+
+            def rect(s, t):
+                lx, ly = t[0] - s[0], t[1] - s[1]
+                return abs(lx - ly * dx / dy if steep else ly - lx * dy / dx)
+
+            widths = [rect(a[0], b[0]), rect(a[1], b[1])]
+            if not all(f.s_tol < w <= f.upm * 0.35 for w in widths):
+                continue
+            mid = (lo + hi) / 2                         # the ink between: one run from edge to edge
+
+            def cross(e):
+                return e[0][1 - k] + (mid - e[0][k]) / (e[1][k] - e[0][k]) * (e[1][1 - k] - e[0][1 - k])
+
+            ca, cb = sorted((cross(a), cross(b)))
+            if not any(abs(s - ca) < 1 and abs(e - cb) < 1 for s, e in _spans(cs, mid, "y" if steep else "x")):
+                continue
+            n = math.hypot(dx, dy)
+            nx, ny = -dy / n, dx / n
+            perp = [abs((b[j][0] - a[j][0]) * nx + (b[j][1] - a[j][1]) * ny) for j in (0, 1)]
+            legs.append(dict(steep=steep, edges=(tuple(a), tuple(b)), rect=widths, perp=perp))
+    return legs
+
+
+def measure_diagonal(font, glyphs, how: str = "rect", *, tol: float | None = None) -> dict:
+    """A diagonal stroke width from the legs of `glyphs` (see `diagonal_legs`): "rect" the width VTT's
+    Diagonal / DStroke take from a CVT, "perp" the thickness across the edges; one sample per leg, the
+    larger of its two end pairs (as VTT's ClassifyStroke). Returns the dict of `measure_height`."""
+    if how not in ("rect", "perp"):
+        raise ValueError(f"how must be 'rect' or 'perp', not {how!r}")
+    f = _font(font)
+    vals, used, missing = [], [], []
+    for name, _, given in f.resolve(glyphs):
+        legs = diagonal_legs(f, name) if name is not None else []
+        if legs:
+            vals.append([max(leg[how]) for leg in legs])
+            used.append(name)
+        else:
+            missing.append(given)
+    return _result(vals, used, f.s_tol if tol is None else tol, missing)
 
 
 def _round_extreme(gs, name: str, y: float) -> bool:
@@ -351,9 +485,10 @@ _BASELINE = {2: 8, 6: 10, 4: 12}
 
 def default_glyphs(cvt: int) -> dict | None:
     """What `measure` measures a CVT of the template from, for prefilling a re-measure:
-    {kind: "height" | "overshoot" | "stem", what, chars, ...}. Heights add `side`, overshoots `side`
-    and `parent` (the flat CVT the value is relative to), stems `axis`, `where` and `band` (the height
-    CVTs (bottom, top) the "y" scan fractions refer to). None for CVTs `measure` does not measure
+    {kind: "height" | "overshoot" | "stem" | "diagonal", what, chars, ...}. Heights add `side`,
+    overshoots `side` and `parent` (the flat CVT the value is relative to), stems `axis`, `where` and
+    `band` (the height CVTs (bottom, top) the "y" scan fractions refer to), diagonals `how` ("rect" |
+    "perp", see `measure_diagonal`). None for CVTs `measure` does not measure
     from glyphs (the stroke parents 65–67 are copies, see `measure`)."""
     if cvt in HEIGHTS:
         what, chars, top = HEIGHTS[cvt]
@@ -366,6 +501,9 @@ def default_glyphs(cvt: int) -> dict | None:
         what, chars, axis, where, band = STEMS[cvt]
         return {"kind": "stem", "what": what, "chars": chars, "axis": axis, "where": where,
                 "band": (_BASELINE[band], band)}
+    if cvt in DIAGONALS:
+        what, chars, how = DIAGONALS[cvt]
+        return {"kind": "diagonal", "what": what, "chars": chars, "how": how}
     return None
 
 
@@ -385,6 +523,8 @@ def measure(font: TTFont) -> dict[int, Measured]:
         band_top = out[band].value or (f.upm * 0.7 if band == 2 else f.upm * 0.5)
         band_bot = out[_BASELINE[band]].value or 0
         keep(cvt, what, measure_stem(f, chars, axis, where, band=(band_bot, band_top)))
+    for cvt, (what, chars, how) in DIAGONALS.items():
+        keep(cvt, what, measure_diagonal(f, chars, how))
 
     # the parents: 66 (X) and 67 (Y) follow the lowercase straight strokes, the grand parent 65 is the
     # thinner of the two (so both may break loose from it at their own ppem)
